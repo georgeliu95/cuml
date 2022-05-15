@@ -44,6 +44,26 @@ void run(const raft::handle_t& handle,
   }
 }
 
+template <typename Index_ = int>
+void run_batched(const raft::handle_t& handle,
+                 bool* adj,
+                 Index_* vd,
+                 Index_* adj_graph,
+                 Index_ adjnnz,
+                 Index_* ex_scan,
+                 Index_ N,
+                 int algo,
+                 Index_ batch_size,
+                 cudaStream_t stream)
+{
+  Pack<Index_> data = {vd, adj, adj_graph, adjnnz, ex_scan, N};
+  switch (algo) {
+    case 0: Naive::launcher<Index_>(handle, data, batch_size, stream); break;
+    // case 1: Algo::launcher<Index_>(handle, data, batch_size, stream); break;
+    default: ASSERT(false, "Incorrect algo passed! '%d'", algo);
+  }
+}
+
 }  // namespace AdjGraph
 }  // namespace Dbscan
 }  // namespace ML

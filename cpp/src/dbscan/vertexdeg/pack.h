@@ -50,6 +50,40 @@ struct Pack {
   }
 };
 
+
+template <typename Type, typename Index_>
+struct BatchedPack {
+  /**
+   * vertex degree array
+   * Last position is the sum of all elements in this array (excluding it)
+   * Hence, its length is one more than the number of points
+   */
+  Index_* vd;
+  /** the adjacency matrix */
+  bool* adj;
+  /** input dataset */
+  const Type* x;
+  /** epsilon neighborhood thresholding param */
+  Type eps;
+  /** number of points in the dataset */
+  Index_ N;
+  /** dataset dimensionality */
+  Index_ D;
+  /** for vertexdeg bound */
+  Index_ lower;
+  Index_ upper;
+
+  /**
+   * @brief reset the output array before calling the actual kernel
+   * @param stream cuda stream where to perform this operation
+   * @param vdlen lenght of the vertex degree array
+   */
+  void resetArray(cudaStream_t stream, Index_ vdlen)
+  {
+    RAFT_CUDA_TRY(cudaMemsetAsync(vd, 0, sizeof(Index_) * vdlen, stream));
+  }
+};
+
 }  // namespace VertexDeg
 }  // namespace Dbscan
 }  // namespace ML

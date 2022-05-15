@@ -37,7 +37,8 @@ void launcher(const raft::handle_t& handle,
   Index_ k = 0;
   Index_ N = data.N;
   ML::pinned_host_vector<Index_> host_vd(batch_size + 1);
-  ML::pinned_host_vector<char> host_adj(((batch_size * N) / 8) + 1);
+  // ML::pinned_host_vector<char> host_adj(((batch_size * N) / 8) + 1);
+  ML::pinned_host_vector<bool> host_adj((batch_size * N) + 8);
   ML::pinned_host_vector<Index_> host_ex_scan(batch_size);
   raft::update_host((bool*)host_adj.data(), data.adj, batch_size * N, stream);
   raft::update_host(host_vd.data(), data.vd, batch_size + 1, stream);

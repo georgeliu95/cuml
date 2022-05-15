@@ -20,6 +20,7 @@
 #include "naive.cuh"
 #include "pack.h"
 #include "precomputed.cuh"
+#include "new.cuh"
 
 namespace ML {
 namespace Dbscan {
@@ -49,6 +50,37 @@ void run(const raft::handle_t& handle,
       break;
     default: ASSERT(false, "Incorrect algo passed! '%d'", algo);
   }
+}
+
+template <typename Type_f, typename Index_ = int>
+void run_batched(const raft::handle_t& handle,
+                 bool* adj,
+                 Index_* vd,
+                 const Type_f* x,
+                 Type_f eps,
+                 Index_ N,
+                 Index_ D,
+                 int algo,
+                 Index_ start_vertex_id,
+                 Index_ batch_size,
+                 cudaStream_t stream)
+{
+    BatchedPack<Type_f, Index_> data = {vd, adj, x, eps, N, D, start_vertex_id, (start_vertex_id + batch_size)};
+    switch (algo) {
+        case 0: 
+            Naive::launcher_batched<Type_f, Index_>(data, start_vertex_id, batch_size, stream);
+            break;
+        // case 1:
+        //     Algo::launcher_batched<Type_f, Index_>(handle, data, start_vertex_id, batch_size, stream);
+        //     break;
+        // case 2:
+        //     Precomputed::launcher<Type_f, Index_>(handle, data, start_vertex_id, batch_size, stream);
+        //     break;
+        // case 3:
+        //     New::launcher<Type_f, Index_>(handle, data, start_vertex_id, batch_size, stream);
+            break;
+        default: ASSERT(false, "Incorrect algo passed! '%d'", algo);
+    }
 }
 
 }  // namespace VertexDeg
