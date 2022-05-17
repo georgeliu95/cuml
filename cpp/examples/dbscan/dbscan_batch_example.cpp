@@ -110,7 +110,7 @@ int main(int argc, char* argv[])
 {
     int devId         = get_argval<int>(argv, argv + argc, "-dev_id", 0);
     int val           = get_argval<int>(argv, argv + argc, "-val", 20);
-    size_t nGroups    = get_argval<size_t>(argv, argv + argc, "-num_batches", 1);
+    size_t nGroups    = get_argval<size_t>(argv, argv + argc, "-num_groups", 1);
     size_t nCols      = get_argval<size_t>(argv, argv + argc, "-num_features", 3);
     std::string input = get_argval<std::string>(argv, argv + argc, "-input", std::string(""));
     int minPts        = get_argval<int>(argv, argv + argc, "-min_pts", 3);

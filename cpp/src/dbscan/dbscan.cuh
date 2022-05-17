@@ -226,26 +226,15 @@ void dbscanBatchedFitImpl(const raft::handle_t& handle,
     int algo_adj = (algo_vd < 2)? algo_vd : 1;
     int algo_ccl = 2;
 
-    int my_rank{0};
-    int n_rank{1};
     Index_ start_row{0};
     Index_ n_owned_rows{total_n_rows};
-
     ASSERT(total_n_rows > 0, "No rows in the input array. DBSCAN cannot be fitted!");
 
-    if (opg) {
-        const auto& comm     = handle.get_comms();
-        my_rank              = comm.get_rank();
-        n_rank               = comm.get_size();
-        Index_ rows_per_rank = raft::ceildiv<Index_>(total_n_rows, n_rank);
-        start_row            = my_rank * rows_per_rank;
-        Index_ end_row       = min((my_rank + 1) * rows_per_rank, total_n_rows);
-        n_owned_rows         = max(Index_(0), end_row - start_row);
-        // Note: it is possible for a node to have no work in theory. It won't
-        // happen in practice (because n_rows is much greater than n_rank)
-    }
+    std::vector<Index_> vec_rows;
+    vec_rows.assign(ptr_n_rows, ptr_n_rows + n_groups);
+    Index_ max_n_rows = *std::max_element(vec_rows.begin(), vec_rows.end());
 
-    CUML_LOG_DEBUG("#%d owns %ld rows", (int)my_rank, (unsigned long)n_owned_rows);
+    CUML_LOG_DEBUG("#owns %ld rows", (unsigned long)n_owned_rows);
 
     // Estimate available memory per batch
     // Note: we can't rely on the reported free memory.
@@ -256,7 +245,7 @@ void dbscanBatchedFitImpl(const raft::handle_t& handle,
 
         // X can either be a feature matrix or distance matrix
         size_t dataset_memory = (metric == raft::distance::Precomputed)
-                                ? ((size_t)total_n_rows * (size_t)total_n_rows * sizeof(T))
+                                ? ((size_t)total_n_rows * (size_t)max_n_rows * sizeof(T))
                                 : ((size_t)total_n_rows * (size_t)n_cols * sizeof(T));
 
         // The estimate is: 80% * total - dataset
