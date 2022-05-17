@@ -20,7 +20,6 @@
 #include "naive.cuh"
 #include "pack.h"
 #include "precomputed.cuh"
-#include "new.cuh"
 
 namespace ML {
 namespace Dbscan {
@@ -70,9 +69,9 @@ void run_batched(const raft::handle_t& handle,
         case 0: 
             Naive::launcher_batched<Type_f, Index_>(data, start_vertex_id, batch_size, stream);
             break;
-        // case 1:
-        //     Algo::launcher_batched<Type_f, Index_>(handle, data, start_vertex_id, batch_size, stream);
-        //     break;
+        case 1:
+            Algo::launcher_batched<Type_f, Index_>(handle, data, start_vertex_id, batch_size, stream);
+            break;
         // case 2:
         //     Precomputed::launcher<Type_f, Index_>(handle, data, start_vertex_id, batch_size, stream);
         //     break;

@@ -222,7 +222,7 @@ std::size_t run(const raft::handle_t& handle,
     // RAFT_CUDA_TRY(cudaMemcpyAsync(host_adj, adj, N * batch_size * sizeof(bool), cudaMemcpyDeviceToHost, stream));
     // RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
     // std::cout << "Adj:" << std::endl;
-    // for(int r = 0; r < batch_size; ++r) {
+    // for(size_t r = 0; r < batch_size; ++r) {
     //   for(int c = 0; c < N; ++c) {
     //     std::cout << host_adj[r * N + c] << " ";
     //   } std::cout << std::endl;
@@ -505,7 +505,7 @@ std::size_t run(const raft::handle_t& handle,
           // RAFT_CUDA_TRY(cudaMemcpyAsync(host_adj, adj, N * batch_size * sizeof(bool), cudaMemcpyDeviceToHost, stream));
           // RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
           // std::cout << "Adj:" << std::endl;
-          // for(int r = 0; r < batch_size; ++r) {
+          // for(size_t r = 0; r < batch_size; ++r) {
           //   for(int c = 0; c < N; ++c) {
           //     std::cout << host_adj[r * N + c] << " ";
           //   } std::cout << std::endl;

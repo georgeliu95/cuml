@@ -110,8 +110,8 @@ void dbscanFitImpl(const raft::handle_t& handle,
 {
   raft::common::nvtx::range fun_scope("ML::Dbscan::Fit");
   ML::Logger::get().setLevel(verbosity);
-  int algo_vd  = (metric == raft::distance::Precomputed) ? 2 : 0;
-  int algo_adj = 0;
+  int algo_vd  = (metric == raft::distance::Precomputed) ? 2 : 1;
+  int algo_adj = 1;
   int algo_ccl = 2;
 
   int my_rank{0};
@@ -222,8 +222,8 @@ void dbscanBatchedFitImpl(const raft::handle_t& handle,
 {
     raft::common::nvtx::range fun_scope("ML::Dbscan::Fit");
     ML::Logger::get().setLevel(verbosity);
-    int algo_vd  = (metric == raft::distance::Precomputed) ? 2 : 0;
-    int algo_adj = 0;
+    int algo_vd  = (metric == raft::distance::Precomputed) ? 2 : 1;
+    int algo_adj = (algo_vd < 2)? algo_vd : 1;
     int algo_ccl = 2;
 
     int my_rank{0};

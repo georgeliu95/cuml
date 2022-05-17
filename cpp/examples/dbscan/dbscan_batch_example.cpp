@@ -98,7 +98,8 @@ void generateDefaultDataset(std::vector<float>& inputData,
     std::vector<float> vData(nRows * nCols, 0.f);
     std::srand(std::time(nullptr));
     for(auto &it : vData) {
-        it = static_cast<float>(std::rand()) / RAND_MAX * 1.0 - 0.5;
+        // it = static_cast<float>(std::rand()) / RAND_MAX * 1.0 - 0.5;
+        it = static_cast<float>(std::rand()) / RAND_MAX * 3.0 - 1.5;
     }
 
     max_bytes_per_batch = 0;  // allow algorithm to set this
@@ -108,6 +109,7 @@ void generateDefaultDataset(std::vector<float>& inputData,
 int main(int argc, char* argv[])
 {
     int devId         = get_argval<int>(argv, argv + argc, "-dev_id", 0);
+    int val           = get_argval<int>(argv, argv + argc, "-val", 20);
     size_t nGroups    = get_argval<size_t>(argv, argv + argc, "-num_batches", 1);
     size_t nCols      = get_argval<size_t>(argv, argv + argc, "-num_features", 3);
     std::string input = get_argval<std::string>(argv, argv + argc, "-input", std::string(""));
@@ -132,8 +134,13 @@ int main(int argc, char* argv[])
         }
     }
 
+    std::srand(std::time(nullptr));
+    std::vector<int> vConsRows;
+    for(int i = 0; i < nGroups; ++i) {
+        vConsRows.emplace_back(rand() / RAND_MAX * val + val);
+    }
     // const std::vector<int> vConsRows{23, 24, 25, 25, 26, 26, 27, 27, 28, 28, 29, 29, 30, 30, 31, 31, 32, 32, 33, 33, 40, 40};
-    const std::vector<int> vConsRows{2300, 2400, 2500, 2500, 2600, 2600, 2700, 2700, 2800, 2800, 2900, 2900, 3000, 3000, 3100, 3100, 3200, 3200, 3300, 3300, 4000, 4000};
+    // const std::vector<int> vConsRows{2300, 2400, 2500, 2500, 2600, 2600, 2700, 2700, 2800, 2800, 2900, 2900, 3000, 3000, 3100, 3100, 3200, 3200, 3300, 3300, 4000, 4000};
     assert(nGroups <= vConsRows.size());
     std::vector<int> vRows(nGroups, 1);
     vRows.assign(vConsRows.begin(), vConsRows.begin() + nGroups);

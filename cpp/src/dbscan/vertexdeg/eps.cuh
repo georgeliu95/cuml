@@ -28,9 +28,12 @@ template <typename DataT,
           typename IdxT,
           typename Policy,
           typename BaseClass = raft::linalg::Contractions_NT<DataT, IdxT, Policy>>
-struct EpsUnexpL2SqNeighborhoodNew : public BaseClass {
+struct EpsUnexpL2SqNeighborhoodBatched : public BaseClass {
  private:
   typedef Policy P;
+
+  IdxT lo;
+  IdxT hi;
 
   bool* adj;
   DataT eps;
@@ -41,21 +44,29 @@ struct EpsUnexpL2SqNeighborhoodNew : public BaseClass {
   DataT acc[P::AccRowsPerTh][P::AccColsPerTh];
 
  public:
-  DI EpsUnexpL2SqNeighborhoodNew(bool* _adj,
+  DI EpsUnexpL2SqNeighborhoodBatched(bool* _adj,
                               IdxT* _vd,
                               const DataT* _x,
                               const DataT* _y,
                               IdxT _m,
                               IdxT _n,
                               IdxT _k,
+                              IdxT _lo,
+                              IdxT _hi,
                               DataT _eps,
                               char* _smem)
-    : BaseClass(_x, _y, _m, _n, _k, _smem), adj(_adj), eps(_eps), vd(_vd), smem(_smem)
+    : BaseClass(_x, _y, _m, _n, _k, _smem), lo(_lo), hi(_hi), adj(_adj), eps(_eps), vd(_vd), smem(_smem)
   {
+    // printf("m = %ld n = %ld\n", this->m, this->n);
   }
 
   DI void run()
   {
+    // if(blockIdx.x * blockDim.x + threadIdx.x + blockIdx.y * blockDim.y + threadIdx.y == 0)
+    // {
+    //   printf("m = %ld, n = %ld, k = %ld\n", (long int)(this->m), (long int)(this->n), (long int)(this->k));
+    // }
+    
     prolog();
     loop();
     epilog();
@@ -103,6 +114,9 @@ struct EpsUnexpL2SqNeighborhoodNew : public BaseClass {
 #pragma unroll
     for (int i = 0; i < P::AccRowsPerTh; ++i) {
       auto xid = startx + i * P::AccThRows;
+      if (xid < this->lo || xid >= this->hi) {
+        continue;
+      }
 #pragma unroll
       for (int j = 0; j < P::AccColsPerTh; ++j) {
         auto yid      = starty + j * P::AccThCols;
@@ -168,16 +182,16 @@ struct EpsUnexpL2SqNeighborhoodNew : public BaseClass {
       raft::myAtomicAdd<unsigned long long>((unsigned long long*)(vd + addrId), val);
     }
   }
-};  // struct EpsUnexpL2SqNeighborhoodNew
+};  // struct EpsUnexpL2SqNeighborhoodBatched
 
 template <typename DataT, typename IdxT, typename Policy>
 __global__ __launch_bounds__(Policy::Nthreads, 2)
 
 static void epsUnexpL2SqNeighKernelBatched(
-    bool* adj, IdxT* vd, const DataT* x, const DataT* y, IdxT m, IdxT n, IdxT k, DataT eps)
+    bool* adj, IdxT* vd, const DataT* x, const DataT* y, IdxT m, IdxT n, IdxT k, IdxT lo, IdxT hi, DataT eps)
 {
   extern __shared__ char smem[];
-  EpsUnexpL2SqNeighborhoodNew<DataT, IdxT, Policy> obj(adj, vd, x, y, m, n, k, eps, smem);
+  EpsUnexpL2SqNeighborhoodBatched<DataT, IdxT, Policy> obj(adj, vd, x, y, m, n, k, lo, hi, eps, smem);
   obj.run();
 }
 
@@ -189,35 +203,39 @@ static void epsUnexpL2SqNeighImplBatched(bool* adj,
                                   IdxT m,
                                   IdxT n,
                                   IdxT k,
+                                  IdxT lo,
+                                  IdxT hi,
                                   DataT eps,
                                   cudaStream_t stream)
 {
   typedef typename raft::linalg::Policy4x4<DataT, VecLen>::Policy Policy;
   dim3 grid(raft::ceildiv<int>(m, Policy::Mblk), raft::ceildiv<int>(n, Policy::Nblk));
   dim3 blk(Policy::Nthreads);
-//   epsUnexpL2SqNeighKernelBatched<DataT, IdxT, Policy>
-//     <<<grid, blk, Policy::SmemSize, stream>>>(adj, vd, x, y, m, n, k, eps);
+  epsUnexpL2SqNeighKernelBatched<DataT, IdxT, Policy>
+    <<<grid, blk, Policy::SmemSize, stream>>>(adj, vd, x, y, m, n, k, lo, hi, eps);
   RAFT_CUDA_TRY(cudaGetLastError());
 }
 
 template <typename DataT, typename IdxT>
-void EpsUnexpL2SqNeighborhoodBatched(bool* adj,
+void epsUnexpL2SqNeighborhoodBatched(bool* adj,
                                     IdxT* vd,
                                     const DataT* x,
                                     const DataT* y,
                                     IdxT m,
                                     IdxT n,
                                     IdxT k,
+                                    IdxT lo,
+                                    IdxT hi,
                                     DataT eps,
                                     cudaStream_t stream)
 {
   size_t bytes = sizeof(DataT) * k;
   if (16 % sizeof(DataT) == 0 && bytes % 16 == 0) {
-    epsUnexpL2SqNeighImplBatched<DataT, IdxT, 16 / sizeof(DataT)>(adj, vd, x, y, m, n, k, eps, stream);
+    epsUnexpL2SqNeighImplBatched<DataT, IdxT, 16 / sizeof(DataT)>(adj, vd, x, y, m, n, k, lo, hi, eps, stream);
   } else if (8 % sizeof(DataT) == 0 && bytes % 8 == 0) {
-    epsUnexpL2SqNeighImplBatched<DataT, IdxT, 8 / sizeof(DataT)>(adj, vd, x, y, m, n, k, eps, stream);
+    epsUnexpL2SqNeighImplBatched<DataT, IdxT, 8 / sizeof(DataT)>(adj, vd, x, y, m, n, k, lo, hi, eps, stream);
   } else {
-    epsUnexpL2SqNeighImplBatched<DataT, IdxT, 1>(adj, vd, x, y, m, n, k, eps, stream);
+    epsUnexpL2SqNeighImplBatched<DataT, IdxT, 1>(adj, vd, x, y, m, n, k, lo, hi, eps, stream);
   }
 }
 

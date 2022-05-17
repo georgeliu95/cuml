@@ -59,7 +59,7 @@ void run_batched(const raft::handle_t& handle,
   Pack<Index_> data = {vd, adj, adj_graph, adjnnz, ex_scan, N};
   switch (algo) {
     case 0: Naive::launcher<Index_>(handle, data, batch_size, stream); break;
-    // case 1: Algo::launcher<Index_>(handle, data, batch_size, stream); break;
+    case 1: Algo::launcher<Index_>(handle, data, batch_size, stream); break;
     default: ASSERT(false, "Incorrect algo passed! '%d'", algo);
   }
 }
