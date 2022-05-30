@@ -97,9 +97,9 @@ __global__ void vertex_degree_batched_kernel(BatchedPack<Type, Index_> data,
   Index_ row      = (blockIdx.y * TPB_Y) + threadIdx.y;
   Index_ col      = (blockIdx.x * TPB_X) + threadIdx.x;
   Index_ N        = data.N;
-  Index_ lower    = data.lower;
-  Index_ upper    = data.upper;
-  if ((row >= batch_size) || (col < lower) || (col >= upper)) return;
+  Index_ lo    = data.lo;
+  Index_ hi    = data.hi;
+  if ((row >= batch_size) || (col < lo) || (col >= hi)) return;
   Type eps      = data.eps;
   Type eps2     = eps * eps;
   Type sum      = Zero;

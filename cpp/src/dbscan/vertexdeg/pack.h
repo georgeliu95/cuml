@@ -69,9 +69,9 @@ struct BatchedPack {
   Index_ N;
   /** dataset dimensionality */
   Index_ D;
-  /** for vertexdeg bound */
-  Index_ lower;
-  Index_ upper;
+  /** for vertexdeg bounds */
+  Index_ lo;
+  Index_ hi;
 
   /**
    * @brief reset the output array before calling the actual kernel

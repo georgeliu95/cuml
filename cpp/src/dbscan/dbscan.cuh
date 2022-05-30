@@ -26,6 +26,8 @@
 #include <algorithm>
 #include <cstddef>
 
+#define algo_or_naive 1
+
 namespace ML {
 namespace Dbscan {
 
@@ -110,8 +112,8 @@ void dbscanFitImpl(const raft::handle_t& handle,
 {
   raft::common::nvtx::range fun_scope("ML::Dbscan::Fit");
   ML::Logger::get().setLevel(verbosity);
-  int algo_vd  = (metric == raft::distance::Precomputed) ? 2 : 1;
-  int algo_adj = 1;
+  int algo_vd  = (metric == raft::distance::Precomputed) ? 2 : algo_or_naive;
+  int algo_adj = algo_or_naive;
   int algo_ccl = 2;
 
   int my_rank{0};
@@ -220,92 +222,108 @@ void dbscanBatchedFitImpl(const raft::handle_t& handle,
                           cudaStream_t stream,
                           int verbosity)
 {
-    raft::common::nvtx::range fun_scope("ML::Dbscan::Fit");
-    ML::Logger::get().setLevel(verbosity);
-    int algo_vd  = (metric == raft::distance::Precomputed) ? 2 : 1;
-    int algo_adj = (algo_vd < 2)? algo_vd : 1;
-    int algo_ccl = 2;
+  // printf(
+  //   "input = %p\nn_groups = %ld\nptr_n_rows = %p\ntotal_n_rows = %ld\nn_cols = %ld\neps = "
+  //   "%lf\nmin_pts = %ld\nlabels = %p\ncore_sample_indices = %p\nstream = %p\nverbosity = %d\n",
+  //   input,
+  //   (long int)n_groups,
+  //   ptr_n_rows,
+  //   (long int)total_n_rows,
+  //   (long int)n_cols,
+  //   eps,
+  //   (long int)min_pts,
+  //   labels,
+  //   core_sample_indices,
+  //   stream,
+  //   verbosity);
 
-    Index_ start_row{0};
-    Index_ n_owned_rows{total_n_rows};
-    ASSERT(total_n_rows > 0, "No rows in the input array. DBSCAN cannot be fitted!");
+  raft::common::nvtx::range fun_scope("ML::Dbscan::Fit");
+  ML::Logger::get().setLevel(verbosity);
+  int algo_vd  = (metric == raft::distance::Precomputed) ? 2 : algo_or_naive;
+  int algo_adj = (algo_vd < 2) ? algo_vd : 1;
+  int algo_ccl = 2;
+  Index_ start_row{0};
+  Index_ n_owned_rows{total_n_rows};
+  ASSERT(total_n_rows > 0, "No rows in the input array. DBSCAN cannot be fitted!");
 
-    std::vector<Index_> vec_rows;
-    vec_rows.assign(ptr_n_rows, ptr_n_rows + n_groups);
-    Index_ max_n_rows = *std::max_element(vec_rows.begin(), vec_rows.end());
+  std::vector<Index_> vec_rows(n_groups, 0);
+  // RAFT_CUDA_TRY(cudaMemcpyAsync(vec_rows.data(), ptr_n_rows, vec_rows.size() * sizeof(Index_), cudaMemcpyDeviceToHost, stream));
+  // RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
+  vec_rows.assign(ptr_n_rows, ptr_n_rows + n_groups);
+  Index_ max_n_rows = *std::max_element(vec_rows.begin(), vec_rows.end());
 
-    CUML_LOG_DEBUG("#owns %ld rows", (unsigned long)n_owned_rows);
+  CUML_LOG_DEBUG("#owns %ld rows", (unsigned long)n_owned_rows);
 
-    // Estimate available memory per batch
-    // Note: we can't rely on the reported free memory.
-    if (max_mbytes_per_batch == 0) {
-        // Query memory information to get the total memory on the device
-        size_t free_memory, total_memory;
-        RAFT_CUDA_TRY(cudaMemGetInfo(&free_memory, &total_memory));
+  // Estimate available memory per batch
+  // Note: we can't rely on the reported free memory.
+  if (max_mbytes_per_batch == 0) {
+    // Query memory information to get the total memory on the device
+    size_t free_memory, total_memory;
+    RAFT_CUDA_TRY(cudaMemGetInfo(&free_memory, &total_memory));
 
-        // X can either be a feature matrix or distance matrix
-        size_t dataset_memory = (metric == raft::distance::Precomputed)
-                                ? ((size_t)total_n_rows * (size_t)max_n_rows * sizeof(T))
-                                : ((size_t)total_n_rows * (size_t)n_cols * sizeof(T));
+    // X can either be a feature matrix or distance matrix
+    size_t dataset_memory = (metric == raft::distance::Precomputed)
+                              ? ((size_t)total_n_rows * (size_t)max_n_rows * sizeof(T))
+                              : ((size_t)total_n_rows * (size_t)n_cols * sizeof(T));
 
-        // The estimate is: 80% * total - dataset
-        max_mbytes_per_batch = (80 * total_memory / 100 - dataset_memory) / 1e6;
+    // The estimate is: 80% * total - dataset
+    max_mbytes_per_batch = (80 * total_memory / 100 - dataset_memory) / 1e6;
 
-        CUML_LOG_DEBUG("Dataset memory: %ld MB", (unsigned long long)(dataset_memory / 1e6));
+    CUML_LOG_DEBUG("Dataset memory: %ld MB", (unsigned long long)(dataset_memory / 1e6));
 
-        CUML_LOG_DEBUG("Estimated available memory: %ld / %ld MB",
-                    (unsigned long long)max_mbytes_per_batch,
-                    (unsigned long long)(total_memory / 1e6));
-    }
+    CUML_LOG_DEBUG("Estimated available memory: %ld / %ld MB",
+                   (unsigned long long)max_mbytes_per_batch,
+                   (unsigned long long)(total_memory / 1e6));
+  }
 
-    size_t estimated_memory;
-    size_t batch_size =
-        compute_batch_size<Index_>(estimated_memory, total_n_rows, n_owned_rows, max_mbytes_per_batch);
+  size_t estimated_memory;
+  size_t batch_size =
+    compute_batch_size<Index_>(estimated_memory, total_n_rows, n_owned_rows, max_mbytes_per_batch);
 
-    CUML_LOG_DEBUG("Running batched training (batch size: %ld, estimated: %lf MB)",
-                    (unsigned long)batch_size,
-                    (double)estimated_memory * 1e-6);
+  CUML_LOG_DEBUG("Running batched training (batch size: %ld, estimated: %lf MB)",
+                 (unsigned long)batch_size,
+                 (double)estimated_memory * 1e-6);
 
-    size_t workspaceSize = Dbscan::run<T, Index_, opg>(handle,
-                                                        input,
-                                                        n_groups,
-                                                        ptr_n_rows,
-                                                        total_n_rows,
-                                                        n_cols,
-                                                        start_row,
-                                                        n_owned_rows,
-                                                        eps,
-                                                        min_pts,
-                                                        labels,
-                                                        core_sample_indices,
-                                                        algo_vd,
-                                                        algo_adj,
-                                                        algo_ccl,
-                                                        NULL,
-                                                        batch_size,
-                                                        stream);
+  size_t workspaceSize = Dbscan::run<T, Index_>(handle,
+                                                input,
+                                                n_groups,
+                                                ptr_n_rows,
+                                                total_n_rows,
+                                                n_cols,
+                                                start_row,
+                                                n_owned_rows,
+                                                eps,
+                                                min_pts,
+                                                labels,
+                                                core_sample_indices,
+                                                algo_vd,
+                                                algo_adj,
+                                                algo_ccl,
+                                                NULL,
+                                                batch_size,
+                                                stream);
 
-    CUML_LOG_DEBUG("Workspace size: %lf MB", (double)workspaceSize * 1e-6);
+  CUML_LOG_DEBUG("Workspace size: %lf MB", (double)workspaceSize * 1e-6);
 
-    rmm::device_uvector<char> workspace(workspaceSize, stream);
-    Dbscan::run<T, Index_, opg>(handle,
-                                input,
-                                n_groups,
-                                ptr_n_rows,
-                                total_n_rows,
-                                n_cols,
-                                start_row,
-                                n_owned_rows,
-                                eps,
-                                min_pts,
-                                labels,
-                                core_sample_indices,
-                                algo_vd,
-                                algo_adj,
-                                algo_ccl,
-                                workspace.data(),
-                                batch_size,
-                                stream);
+  rmm::device_uvector<char> workspace(workspaceSize, stream);
+  Dbscan::run<T, Index_>(handle,
+                         input,
+                         n_groups,
+                         ptr_n_rows,
+                         total_n_rows,
+                         n_cols,
+                         start_row,
+                         n_owned_rows,
+                         eps,
+                         min_pts,
+                         labels,
+                         core_sample_indices,
+                         algo_vd,
+                         algo_adj,
+                         algo_ccl,
+                         workspace.data(),
+                         batch_size,
+                         stream);
 }
 
 }  // namespace Dbscan

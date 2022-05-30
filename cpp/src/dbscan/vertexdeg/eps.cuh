@@ -75,6 +75,11 @@ struct EpsUnexpL2SqNeighborhoodBatched : public BaseClass {
  private:
   DI void prolog()
   {
+    // long long int start_time = 0;
+    // if(blockIdx.x * blockDim.x + threadIdx.x + blockIdx.y * blockDim.y + threadIdx.y == 0)
+    // {
+    //   start_time = clock64();
+    // }
     this->ldgXY(0);
 #pragma unroll
     for (int i = 0; i < P::AccRowsPerTh; ++i) {
@@ -86,10 +91,20 @@ struct EpsUnexpL2SqNeighborhoodBatched : public BaseClass {
     this->stsXY();
     __syncthreads();
     this->pageWr ^= 1;
+    // if(blockIdx.x * blockDim.x + threadIdx.x + blockIdx.y * blockDim.y + threadIdx.y == 0)
+    // {
+    //   long long int duration_time = clock64() - start_time;
+    //   printf("prolog = %lld\n", duration_time);
+    // }
   }
 
   DI void loop()
   {
+    // long long int start_time = 0;
+    // if(blockIdx.x * blockDim.x + threadIdx.x + blockIdx.y * blockDim.y + threadIdx.y == 0)
+    // {
+    //   start_time = clock64();
+    // }
     for (int kidx = P::Kblk; kidx < this->k; kidx += P::Kblk) {
       this->ldgXY(kidx);
       accumulate();  // on the previous k-block
@@ -99,10 +114,20 @@ struct EpsUnexpL2SqNeighborhoodBatched : public BaseClass {
       this->pageRd ^= 1;
     }
     accumulate();  // last iteration
+    // if(blockIdx.x * blockDim.x + threadIdx.x + blockIdx.y * blockDim.y + threadIdx.y == 0)
+    // {
+    //   long long int duration_time = clock64() - start_time;
+    //   printf("loop = %lld\n", duration_time);
+    // }
   }
 
   DI void epilog()
   {
+    // long long int start_time = 0;
+    // if(blockIdx.x * blockDim.x + threadIdx.x + blockIdx.y * blockDim.y + threadIdx.y == 0)
+    // {
+    //   start_time = clock64();
+    // }
     IdxT startx = blockIdx.x * P::Mblk + this->accrowid;
     IdxT starty = blockIdx.y * P::Nblk + this->acccolid;
     auto lid    = raft::laneId();
@@ -115,7 +140,7 @@ struct EpsUnexpL2SqNeighborhoodBatched : public BaseClass {
     for (int i = 0; i < P::AccRowsPerTh; ++i) {
       auto xid = startx + i * P::AccThRows;
       if (xid < this->lo || xid >= this->hi) {
-        continue;
+        continue; /* */
       }
 #pragma unroll
       for (int j = 0; j < P::AccColsPerTh; ++j) {
@@ -130,15 +155,25 @@ struct EpsUnexpL2SqNeighborhoodBatched : public BaseClass {
     }
     // perform reduction of adjacency values to compute vertex degrees
     if (vd != nullptr) { updateVertexDegree(sums); }
+    // if(blockIdx.x * blockDim.x + threadIdx.x + blockIdx.y * blockDim.y + threadIdx.y == 0)
+    // {
+    //   long long int duration_time = clock64() - start_time;
+    //   printf("epilog = %lld\n", duration_time);
+    // }
   }
 
   DI void accumulate()
   {
+    IdxT startx = blockIdx.x * P::Mblk + this->accrowid; 
 #pragma unroll
     for (int ki = 0; ki < P::Kblk; ki += P::Veclen) {
       this->ldsXY(ki);
 #pragma unroll
       for (int i = 0; i < P::AccRowsPerTh; ++i) {
+        auto xid = startx + i * P::AccThRows;
+        if (xid < this->lo || xid >= this->hi) {
+          continue; /* */
+        }
 #pragma unroll
         for (int j = 0; j < P::AccColsPerTh; ++j) {
 #pragma unroll

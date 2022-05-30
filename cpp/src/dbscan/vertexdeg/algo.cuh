@@ -65,8 +65,8 @@ void launcher_batched(const raft::handle_t& handle,
     index_t m    = data.N;
     index_t n    = min(data.N - start_vertex_id, batch_size);
     index_t k    = data.D;
-    index_t lo   = data.lower;
-    index_t hi   = data.upper;
+    index_t lo   = data.lo;
+    index_t hi   = data.hi;
     value_t eps2 = data.eps * data.eps;
 
     epsUnexpL2SqNeighborhoodBatched<value_t, index_t>(

@@ -62,9 +62,11 @@ void run_batched(const raft::handle_t& handle,
                  int algo,
                  Index_ start_vertex_id,
                  Index_ batch_size,
+                 Index_ low_bound,
+                 Index_ high_bound,
                  cudaStream_t stream)
 {
-    BatchedPack<Type_f, Index_> data = {vd, adj, x, eps, N, D, start_vertex_id, (start_vertex_id + batch_size)};
+    BatchedPack<Type_f, Index_> data = {vd, adj, x, eps, N, D, low_bound, high_bound};
     switch (algo) {
         case 0: 
             Naive::launcher_batched<Type_f, Index_>(data, start_vertex_id, batch_size, stream);

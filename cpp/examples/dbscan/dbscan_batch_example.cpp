@@ -23,6 +23,7 @@
 #include <sstream>
 #include <vector>
 #include <numeric>
+#include <ctime>
 
 #include <raft/handle.hpp>
 
@@ -183,6 +184,32 @@ int main(int argc, char* argv[])
         }
     }
 
+    // For test
+    {
+        // h_inputData = std::vector<float>{-7.67792, 9.40799, -4.89711, 
+        //                                  -1.00162, 6.63055, -7.56435, 
+        //                                  7.87979, -2.54078, -3.3965, 
+        //                                  -7.47557, 9.35994, -4.76174, 
+        //                                  -7.58246, 9.26786, -4.74305, 
+        //                                  -1.02078, 6.96886, -7.65972, 
+        //                                  -1.02734, 6.95183, -7.63955, 
+        //                                  8.09822, -2.27863, -3.26218, 
+        //                                  8.08325, -2.5214, -3.31773, 
+        //                                  0.0, 0.0, 0.0, 
+        //                                  0.0, 0.0, 0.0, 
+        //                                  0.0, 0.0, 0.0, 
+        //                                  0.0, 0.0, 0.0, 
+        //                                  0.0, 0.0, 0.0, 
+        //                                  0.0, 0.0, 0.0, };
+        // nGroups = 2;
+        // vRows = std::vector<int>{6, 9};
+        // nTotalRows = std::accumulate(vRows.begin(), vRows.end(), 0);
+        // nCols = 3;
+        // minPts = 3;
+        // eps = 1.0;
+    }
+    
+
     cudaStream_t stream;
     CUDA_RT_CALL(cudaStreamCreate(&stream));
     raft::handle_t handle{stream};
@@ -191,13 +218,13 @@ int main(int argc, char* argv[])
     int* d_labels      = nullptr;
     float* d_inputData = nullptr;
 
-    CUDA_RT_CALL(cudaMalloc(&d_labels, nTotalRows * sizeof(int)));
-    CUDA_RT_CALL(cudaMalloc(&d_inputData, nTotalRows * nCols * sizeof(float)));
-    CUDA_RT_CALL(cudaMemcpyAsync(d_inputData,
-                                h_inputData.data(),
-                                nTotalRows * nCols * sizeof(float),
-                                cudaMemcpyHostToDevice,
-                                stream));
+    // CUDA_RT_CALL(cudaMalloc(&d_labels, nTotalRows * sizeof(int)));
+    // CUDA_RT_CALL(cudaMalloc(&d_inputData, nTotalRows * nCols * sizeof(float)));
+    // CUDA_RT_CALL(cudaMemcpyAsync(d_inputData,
+    //                             h_inputData.data(),
+    //                             nTotalRows * nCols * sizeof(float),
+    //                             cudaMemcpyHostToDevice,
+    //                             stream));
 
     std::cout << "Running DBSCAN with following parameters:" << std::endl
               << "Number of groups - " << nGroups << std::endl 
@@ -207,65 +234,37 @@ int main(int argc, char* argv[])
               << "eps - " << eps << std::endl
               << "max_bytes_per_batch - " << max_bytes_per_batch << std::endl;
 
-    std::cout << std::endl << "=====\t batched version\t =====" << std::endl;
-    ML::Dbscan::fit(handle,
-                    d_inputData,
-                    nGroups,
-                    vRows.data(),
-                    nTotalRows,
-                    nCols,
-                    eps,
-                    minPts,
-                    raft::distance::L2SqrtUnexpanded,
-                    d_labels,
-                    nullptr,
-                    max_bytes_per_batch,
-                    CUML_LEVEL_INFO,
-                    false);
+    // std::cout << std::endl << "=====\t batched version\t =====" << std::endl;
+    // ML::Dbscan::fit(handle,
+    //                 d_inputData,
+    //                 nGroups,
+    //                 vRows.data(),
+    //                 nTotalRows,
+    //                 nCols,
+    //                 eps,
+    //                 minPts,
+    //                 raft::distance::L2SqrtUnexpanded,
+    //                 d_labels,
+    //                 nullptr,
+    //                 max_bytes_per_batch,
+    //                 CUML_LEVEL_INFO,
+    //                 false);
 
-    CUDA_RT_CALL(cudaMemcpyAsync(h_labels.data(), d_labels, nTotalRows * sizeof(int), cudaMemcpyDeviceToHost, stream));
-    CUDA_RT_CALL(cudaStreamSynchronize(stream));
+    // CUDA_RT_CALL(cudaMemcpyAsync(h_labels.data(), d_labels, nTotalRows * sizeof(int), cudaMemcpyDeviceToHost, stream));
+    // CUDA_RT_CALL(cudaStreamSynchronize(stream));
 
-    for(int b = 0, start_idx = 0; b < nGroups; ++b) {
-        std::cout << "Group " << b << " : ";
-        for(int i = 0; i < vRows[b]; ++i) {
-            std::cout << h_labels[start_idx++] << " ";
-        }
-        std::cout << std::endl;
-    }
-
-    // for(int b = 0; b < nGroups; ++b) {
-    //     std::map<long, size_t> histogram;
-    //     int start_row = 0;
-    //     for (int row = start_row; row < start_row + vRows[b]; row++) {
-    //         if (histogram.find(h_labels[row]) == histogram.end()) {
-    //             histogram[h_labels[row]] = 1;
-    //         } else {
-    //             histogram[h_labels[row]]++;
-    //         }
+    // for(int b = 0, start_idx = 0; b < nGroups; ++b) {
+    //     std::cout << "Group " << b << " : ";
+    //     for(int i = 0; i < vRows[b]; ++i) {
+    //         std::cout << h_labels[start_idx++] << " ";
     //     }
-
-    //     size_t nClusters = 0;
-    //     size_t noise     = 0;
-    //     std::cout << "Group " << b << std::endl;
-    //     std::cout << "Histogram of samples" << std::endl;
-    //     std::cout << "Cluster id, Number samples" << std::endl;
-    //     for (auto it = histogram.begin(); it != histogram.end(); it++) {
-    //         if (it->first != -1) {
-    //             std::cout << std::setw(10) << it->first << ", " << it->second << std::endl;
-    //             nClusters++;
-    //         } else {
-    //             noise += it->second;
-    //         }
-    //     }
-
-    //     std::cout << "Total number of clusters: " << nClusters << std::endl;
-    //     std::cout << "Noise samples: " << noise << std::endl;
+    //     std::cout << std::endl;
     // }
-    
+
     /* print inputData */
     // std::for_each(h_inputData.begin(), h_inputData.end(), [=](float x){ std::cout << x << " "; }); std::cout << std::endl;
     std::cout << std::endl << "=====\t compare version\t =====" << std::endl;
+    double compTime = 0.0;
     std::vector<std::vector<int>> h_all_labels;
     int _startRow = 0;
     for(int b = 0; b < nGroups; ++b) {
@@ -283,21 +282,24 @@ int main(int argc, char* argv[])
         CUDA_RT_CALL(cudaMalloc(&_d_inputData, _h_inputData.size() * sizeof(float)));
         CUDA_RT_CALL(cudaMemcpyAsync(_d_inputData, _h_inputData.data(), _h_inputData.size() * sizeof(float), cudaMemcpyHostToDevice, stream));
 
-        ML::Dbscan::fit(handle,
-                        _d_inputData,
-                        _nRows,
-                        _nCols,
-                        eps,
-                        minPts,
-                        raft::distance::L2SqrtUnexpanded,
-                        _d_labels,
-                        nullptr,
-                        max_bytes_per_batch,
-                        CUML_LEVEL_INFO,
-                        false);
+        auto start_time = std::chrono::high_resolution_clock::now();
+        for(int i = 0; i < 100; ++i)
+            ML::Dbscan::fit(handle,
+                            _d_inputData,
+                            _nRows,
+                            _nCols,
+                            eps,
+                            minPts,
+                            raft::distance::L2SqrtUnexpanded,
+                            _d_labels,
+                            nullptr,
+                            max_bytes_per_batch,
+                            CUML_LEVEL_INFO,
+                            false);
 
         CUDA_RT_CALL(cudaMemcpyAsync(_h_labels.data(), _d_labels, _h_labels.size() * sizeof(int), cudaMemcpyDeviceToHost, stream));
         CUDA_RT_CALL(cudaStreamSynchronize(stream));
+        compTime += std::chrono::duration_cast<std::chrono::duration<double>>(std::chrono::high_resolution_clock::now() - start_time).count();
         h_all_labels.emplace_back(_h_labels);
 
         CUDA_RT_CALL(cudaFree(_d_labels));
@@ -310,13 +312,52 @@ int main(int argc, char* argv[])
         std::for_each(_h_labels.begin(), _h_labels.end(), [=](int x){ std::cout << x << " "; }); std::cout << std::endl;
     }
 
+    sleep(3);
+    std::cout << std::endl << "=====\t batched version\t =====" << std::endl;
+    double batchTime = 0.0;
+    CUDA_RT_CALL(cudaMalloc(&d_labels, nTotalRows * sizeof(int)));
+    CUDA_RT_CALL(cudaMalloc(&d_inputData, nTotalRows * nCols * sizeof(float)));
+    CUDA_RT_CALL(cudaMemcpyAsync(d_inputData,
+                                h_inputData.data(),
+                                nTotalRows * nCols * sizeof(float),
+                                cudaMemcpyHostToDevice,
+                                stream));
+    auto start_time = std::chrono::high_resolution_clock::now();
+    for(int i = 0; i < 100; ++i)
+        ML::Dbscan::fit(handle,
+                        d_inputData,
+                        nGroups,
+                        vRows.data(),
+                        nTotalRows,
+                        nCols,
+                        eps,
+                        minPts,
+                        raft::distance::L2SqrtUnexpanded,
+                        d_labels,
+                        nullptr,
+                        max_bytes_per_batch,
+                        CUML_LEVEL_INFO,
+                        false);
+
+    CUDA_RT_CALL(cudaMemcpyAsync(h_labels.data(), d_labels, nTotalRows * sizeof(int), cudaMemcpyDeviceToHost, stream));
+    CUDA_RT_CALL(cudaStreamSynchronize(stream));
+    batchTime += std::chrono::duration_cast<std::chrono::duration<double>>(std::chrono::high_resolution_clock::now() - start_time).count();
+
+    for(int b = 0, start_idx = 0; b < nGroups; ++b) {
+        std::cout << "Group " << b << " : ";
+        for(int i = 0; i < vRows[b]; ++i) {
+            std::cout << h_labels[start_idx++] << " ";
+        }
+        std::cout << std::endl;
+    }
+
     int _diff = 0;
     for(int b = 0, _idx = 0; b < h_all_labels.size(); ++b) {
         std::vector<int> _h_labels = h_all_labels.at(b);
         for(int i = 0; i < _h_labels.size(); ++i) {
             _diff += h_labels.at(_idx++) - _h_labels.at(i);
         }
-    } std::cout << "Diff is " << _diff << std::endl;
+    } std::cout << "Diff is " << _diff << " comp_time = " << compTime << " s" << " batch_time = " << batchTime << " s" << std::endl;
 
     CUDA_RT_CALL(cudaFree(d_labels));
     CUDA_RT_CALL(cudaFree(d_inputData));

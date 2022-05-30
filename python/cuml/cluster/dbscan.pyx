@@ -30,6 +30,7 @@ from cuml.common.base import Base
 from cuml.common.doc_utils import generate_docstring
 from raft.common.handle cimport handle_t
 from cuml.common import input_to_cuml_array
+from cuml.common import input_to_host_array
 from cuml.common import using_output_type
 from cuml.common.array_descriptor import CumlArrayDescriptor
 from cuml.common.mixins import ClusterMixin
@@ -83,6 +84,66 @@ cdef extern from "cuml/cluster/dbscan.hpp" \
     cdef void fit(handle_t& handle,
                   double *input,
                   int64_t n_rows,
+                  int64_t n_cols,
+                  double eps,
+                  int min_pts,
+                  DistanceType metric,
+                  int64_t *labels,
+                  int64_t *core_sample_indices,
+                  size_t max_mbytes_per_batch,
+                  int verbosity,
+                  bool opg) except +
+
+    cdef void fit(handle_t& handle,
+                  float *input,
+                  int n_groups,
+                  int *ptr_rows,
+                  int total_n_rows,
+                  int n_cols,
+                  float eps,
+                  int min_pts,
+                  DistanceType metric,
+                  int *labels,
+                  int *core_sample_indices,
+                  size_t max_mbytes_per_batch,
+                  int verbosity,
+                  bool opg) except +
+
+    cdef void fit(handle_t& handle,
+                  double *input,
+                  int n_groups,
+                  int *ptr_rows,
+                  int total_n_rows,
+                  int n_cols,
+                  double eps,
+                  int min_pts,
+                  DistanceType metric,
+                  int *labels,
+                  int *core_sample_indices,
+                  size_t max_mbytes_per_batch,
+                  int verbosity,
+                  bool opg) except +
+
+    cdef void fit(handle_t& handle,
+                  float *input,
+                  int64_t n_groups,
+                  int64_t *ptr_rows,
+                  int64_t total_n_rows,
+                  int64_t n_cols,
+                  double eps,
+                  int min_pts,
+                  DistanceType metric,
+                  int64_t *labels,
+                  int64_t *core_sample_indices,
+                  size_t max_mbytes_per_batch,
+                  int verbosity,
+                  bool opg) except +
+
+    cdef void fit(handle_t& handle,
+                  double *input,
+                  int64_t n_groups,
+                  int64_t *ptr_rows,
+                  int64_t total_n_rows,
                   int64_t n_cols,
                   double eps,
                   int min_pts,
@@ -234,6 +295,8 @@ class DBSCAN(Base,
         if self.max_mbytes_per_batch is None:
             self.max_mbytes_per_batch = 0
 
+        # self.verbose = 5
+
     def _fit(self, X, out_dtype, opg) -> "DBSCAN":
         """
         Protected auxiliary function for `fit`. Takes an additional parameter
@@ -362,6 +425,158 @@ class DBSCAN(Base,
 
         return self
 
+    def _fit_batched(self, X, Rows, out_dtype, opg) -> "DBSCAN":
+        """
+        Protected auxiliary function for `fit`. Takes an additional parameter
+        opg that is set to `False` for SG, `True` for OPG (multi-GPU)
+        """
+        if out_dtype not in ["int32", np.int32, "int64", np.int64]:
+            raise ValueError("Invalid value for out_dtype. "
+                             "Valid values are {'int32', 'int64', "
+                             "np.int32, np.int64}")
+
+        X_m, total_n_rows, n_cols, self.dtype = \
+            input_to_cuml_array(X, order='C',
+                                check_dtype=[np.float32, np.float64])
+
+        Rows_m, Rows_m_ptr, n_groups, _, _ = \
+            input_to_host_array(Rows, order='F',
+                                check_dtype=[np.int32, np.int64])
+        # n_groups = Rows.shape[0]
+
+        print("n_groups =", n_groups)
+
+        if total_n_rows == 0:
+            raise ValueError("No rows in the input array. DBScan cannot be "
+                             "fitted!")
+
+        cdef uintptr_t input_ptr = X_m.ptr
+
+        cdef uintptr_t rows_ptr = Rows_m_ptr
+
+        cdef handle_t* handle_ = <handle_t*><size_t>self.handle.getHandle()
+
+        self.labels_ = CumlArray.empty(total_n_rows, dtype=out_dtype,
+                                       index=X_m.index)
+        cdef uintptr_t labels_ptr = self.labels_.ptr
+
+        cdef uintptr_t core_sample_indices_ptr = <uintptr_t> NULL
+
+        # metric
+        metric_parsing = {
+            "L2": DistanceType.L2SqrtUnexpanded,
+            "euclidean": DistanceType.L2SqrtUnexpanded,
+            "precomputed": DistanceType.Precomputed,
+        }
+        if self.metric in metric_parsing:
+            metric = metric_parsing[self.metric.lower()]
+        else:
+            raise ValueError("Invalid value for metric: {}"
+                             .format(self.metric))
+
+        # Create the output core_sample_indices only if needed
+        if self.calc_core_sample_indices:
+            self.core_sample_indices_ = \
+                CumlArray.empty(total_n_rows, dtype=out_dtype)
+            core_sample_indices_ptr = self.core_sample_indices_.ptr
+
+        print("Call fit")
+
+        if self.dtype == np.float32:
+            if out_dtype == "int32" or out_dtype is np.int32:
+                print("pyx func A")
+                fit(handle_[0],
+                    <float*>input_ptr,
+                    <int> n_groups,
+                    <int*> rows_ptr,
+                    <int> total_n_rows,
+                    <int> n_cols,
+                    <float> self.eps,
+                    <int> self.min_samples,
+                    <DistanceType> metric,
+                    <int*> labels_ptr,
+                    <int*> core_sample_indices_ptr,
+                    <size_t>self.max_mbytes_per_batch,
+                    <int> self.verbose,
+                    <bool> opg)
+            else:
+                print("pyx func B")
+                fit(handle_[0],
+                    <float*>input_ptr,
+                    <int64_t> n_groups,
+                    <int64_t*> rows_ptr,
+                    <int64_t> total_n_rows,
+                    <int64_t> n_cols,
+                    <float> self.eps,
+                    <int> self.min_samples,
+                    <DistanceType> metric,
+                    <int64_t*> labels_ptr,
+                    <int64_t*> core_sample_indices_ptr,
+                    <size_t>self.max_mbytes_per_batch,
+                    <int> self.verbose,
+                    <bool> opg)
+
+        else:
+            if out_dtype == "int32" or out_dtype is np.int32:
+                print("pyx func C")
+                fit(handle_[0],
+                    <double*>input_ptr,
+                    <int> n_groups,
+                    <int*> rows_ptr,
+                    <int> total_n_rows,
+                    <int> n_cols,
+                    <double> self.eps,
+                    <int> self.min_samples,
+                    <DistanceType> metric,
+                    <int*> labels_ptr,
+                    <int*> core_sample_indices_ptr,
+                    <size_t> self.max_mbytes_per_batch,
+                    <int> self.verbose,
+                    <bool> opg)
+            else:
+                print("pyx func D")
+                fit(handle_[0],
+                    <double*>input_ptr,
+                    <int64_t> n_groups,
+                    <int64_t*> rows_ptr,
+                    <int64_t> total_n_rows,
+                    <int64_t> n_cols,
+                    <double> self.eps,
+                    <int> self.min_samples,
+                    <DistanceType> metric,
+                    <int64_t*> labels_ptr,
+                    <int64_t*> core_sample_indices_ptr,
+                    <size_t> self.max_mbytes_per_batch,
+                    <int> self.verbose,
+                    <bool> opg)
+
+        # make sure that the `fit` is complete before the following
+        # delete call happens
+        self.handle.sync()
+        del(X_m)
+        del(Rows_m)
+
+        # Finally, resize the core_sample_indices array if necessary
+        if self.calc_core_sample_indices:
+
+            # Temp convert to cupy array (better than using `cupy.asarray`)
+            with using_output_type("cupy"):
+
+                # First get the min index. These have to monotonically
+                # increasing, so the min index should be the first returned -1
+                min_index = cp.argmin(self.core_sample_indices_).item()
+
+                # Check for the case where there are no -1's
+                if ((min_index == 0 and
+                     self.core_sample_indices_[min_index].item() != -1)):
+                    # Nothing to delete. The array has no -1's
+                    pass
+                else:
+                    self.core_sample_indices_ = \
+                        self.core_sample_indices_[:min_index]
+
+        return self
+
     @generate_docstring(skip_parameters_heading=True)
     def fit(self, X, out_dtype="int32") -> "DBSCAN":
         """
@@ -375,6 +590,20 @@ class DBSCAN(Base,
 
         """
         return self._fit(X, out_dtype, False)
+
+    @generate_docstring(skip_parameters_heading=True)
+    def fit_batched(self, X, Rows, out_dtype) -> "DBSCAN":
+        """
+        Perform DBSCAN clustering from features.
+
+        Parameters
+        ----------
+        out_dtype: dtype Determines the precision of the output labels array.
+            default: "int32". Valid values are { "int32", np.int32,
+            "int64", np.int64}.
+
+        """
+        return self._fit_batched(X, Rows, out_dtype, False)
 
     @generate_docstring(skip_parameters_heading=True,
                         return_values={'name': 'preds',
@@ -393,6 +622,25 @@ class DBSCAN(Base,
 
         """
         self.fit(X, out_dtype)
+        return self.labels_
+
+    @generate_docstring(skip_parameters_heading=True,
+                        return_values={'name': 'preds',
+                                       'type': 'dense',
+                                       'description': 'Cluster labels',
+                                       'shape': '(n_samples, 1)'})
+    def fit_predict_batched(self, X, Rows, out_dtype) -> CumlArray:
+        """
+        Performs clustering on X and returns cluster labels.
+
+        Parameters
+        ----------
+        out_dtype: dtype Determines the precision of the output labels array.
+            default: "int32". Valid values are { "int32", np.int32,
+            "int64", np.int64}.
+
+        """
+        self.fit_batched(X, Rows, out_dtype)
         return self.labels_
 
     def get_param_names(self):

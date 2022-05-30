@@ -202,36 +202,36 @@ void fit(const raft::handle_t& handle,
          int verbosity,
          bool opg)
 {
-    if (opg)
-        dbscanBatchedFitImpl<float, int, true>(handle,
-                                               input,
-                                               n_groups,
-                                               ptr_n_rows,
-                                               total_n_rows,
-                                               n_cols,
-                                               eps,
-                                               min_pts,
-                                               metric,
-                                               labels,
-                                               core_sample_indices,
-                                               max_bytes_per_batch,
-                                               handle.get_stream(),
-                                               verbosity);
-    else
-        dbscanBatchedFitImpl<float, int, false>(handle,
-                                                input,
-                                                n_groups,
-                                                ptr_n_rows,
-                                                total_n_rows,
-                                                n_cols,
-                                                eps,
-                                                min_pts,
-                                                metric,
-                                                labels,
-                                                core_sample_indices,
-                                                max_bytes_per_batch,
-                                                handle.get_stream(),
-                                                verbosity);
+  if (opg)
+    dbscanBatchedFitImpl<float, int, true>(handle,
+                                           input,
+                                           n_groups,
+                                           ptr_n_rows,
+                                           total_n_rows,
+                                           n_cols,
+                                           eps,
+                                           min_pts,
+                                           metric,
+                                           labels,
+                                           core_sample_indices,
+                                           max_bytes_per_batch,
+                                           handle.get_stream(),
+                                           verbosity);
+  else
+    dbscanBatchedFitImpl<float, int, false>(handle,
+                                            input,
+                                            n_groups,
+                                            ptr_n_rows,
+                                            total_n_rows,
+                                            n_cols,
+                                            eps,
+                                            min_pts,
+                                            metric,
+                                            labels,
+                                            core_sample_indices,
+                                            max_bytes_per_batch,
+                                            handle.get_stream(),
+                                            verbosity);
 }
 
 void fit(const raft::handle_t& handle,
@@ -326,7 +326,7 @@ void fit(const raft::handle_t& handle,
                                                 max_bytes_per_batch,
                                                 handle.get_stream(),
                                                 verbosity);
-        }
+}
 
 void fit(const raft::handle_t& handle,
          double* input,
