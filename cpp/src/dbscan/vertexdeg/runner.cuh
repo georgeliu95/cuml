@@ -51,10 +51,12 @@ void run(const raft::handle_t& handle,
   }
 }
 
-template <typename Type_f, typename Index_ = int>
+template <typename Type_f, typename Index_ = int, typename LookupType = ML::Dbscan::LookupTable<Index_>>
 void run_batched(const raft::handle_t& handle,
                  bool* adj,
                  Index_* vd,
+                 Index_* vd_batch,
+                 Index_* vd_all,
                  const Type_f* x,
                  Type_f eps,
                  Index_ N,
@@ -62,26 +64,34 @@ void run_batched(const raft::handle_t& handle,
                  int algo,
                  Index_ start_vertex_id,
                  Index_ batch_size,
-                 Index_ low_bound,
-                 Index_ high_bound,
-                 cudaStream_t stream)
+                 cudaStream_t stream,
+                 Index_ group_id           = 0,
+                 Index_ adj_nnz            = 0,
+                 const LookupType* const lookup = nullptr)
 {
-    BatchedPack<Type_f, Index_> data = {vd, adj, x, eps, N, D, low_bound, high_bound};
-    switch (algo) {
-        case 0: 
-            Naive::launcher_batched<Type_f, Index_>(data, start_vertex_id, batch_size, stream);
-            break;
-        case 1:
-            Algo::launcher_batched<Type_f, Index_>(handle, data, start_vertex_id, batch_size, stream);
-            break;
-        // case 2:
-        //     Precomputed::launcher<Type_f, Index_>(handle, data, start_vertex_id, batch_size, stream);
-        //     break;
-        // case 3:
-        //     New::launcher<Type_f, Index_>(handle, data, start_vertex_id, batch_size, stream);
-            break;
-        default: ASSERT(false, "Incorrect algo passed! '%d'", algo);
-    }
+  Index_ n_groups    = lookup->n_groups;
+  Index_ n_rows      = lookup->n_rows;
+  Index_ max_rows    = lookup->max_rows;
+  Index_ adj_stride  = adj_nnz;
+  Index_* row_starts = lookup->host_row_starts;
+  Index_* row_steps  = lookup->host_row_steps;
+  ML::Dbscan::DataLoader<bool, Index_> data_loader(
+    n_groups, n_rows, max_rows, adj_stride, row_starts, row_steps, adj);
+  BatchedPack<Type_f, Index_> data = {
+    vd, vd_batch, vd_all, adj, x, eps, N, D, group_id, data_loader};
+  switch (algo) {
+    case 0:
+      Naive::launcher_batched_new<Type_f, Index_>(data, start_vertex_id, batch_size, stream);
+      break;
+    case 1:
+      Algo::launcher_batched_new<Type_f, Index_>(handle, data, start_vertex_id, batch_size, stream);
+      break;
+      // case 2:
+      //     Precomputed::launcher<Type_f, Index_>(handle, data, start_vertex_id, batch_size,
+      //     stream); break;
+      break;
+    default: ASSERT(false, "Incorrect algo passed! '%d'", algo);
+  }
 }
 
 }  // namespace VertexDeg

@@ -16,6 +16,8 @@
 
 #pragma once
 
+#include "../boarder.cuh"
+
 namespace ML {
 namespace Dbscan {
 namespace VertexDeg {
@@ -50,7 +52,6 @@ struct Pack {
   }
 };
 
-
 template <typename Type, typename Index_>
 struct BatchedPack {
   /**
@@ -59,6 +60,8 @@ struct BatchedPack {
    * Hence, its length is one more than the number of points
    */
   Index_* vd;
+  Index_* vd_batch;
+  Index_* vd_all;
   /** the adjacency matrix */
   bool* adj;
   /** input dataset */
@@ -69,9 +72,10 @@ struct BatchedPack {
   Index_ N;
   /** dataset dimensionality */
   Index_ D;
-  /** for vertexdeg bounds */
-  Index_ lo;
-  Index_ hi;
+
+  /** **/
+  Index_ group_id = 0;
+  ML::Dbscan::DataLoader<bool, Index_> data_loader;
 
   /**
    * @brief reset the output array before calling the actual kernel

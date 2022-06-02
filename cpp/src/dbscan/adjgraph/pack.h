@@ -16,6 +16,8 @@
 
 #pragma once
 
+#include "../boarder.cuh"
+
 namespace ML {
 namespace Dbscan {
 namespace AdjGraph {
@@ -39,6 +41,9 @@ struct Pack {
   Index_* ex_scan;
   /** number of points in the dataset */
   Index_ N;
+
+  /** **/
+  ML::Dbscan::DataLoader<bool, Index_> data_loader;
 };
 
 }  // namespace AdjGraph

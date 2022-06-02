@@ -60,6 +60,53 @@ void launcher(const raft::handle_t& handle,
   raft::update_device(data.adj_graph, host_adj_graph.data(), adjgraph_size, stream);
   raft::update_device(data.ex_scan, host_ex_scan.data(), batch_size, stream);
 }
+
+template <typename Index_ = int>
+void launcher_batched(const raft::handle_t& handle,
+                      Pack<Index_> data,
+                      Index_ batch_size,
+                      cudaStream_t stream)
+{
+  Index_ k          = 0;
+  Index_ N          = data.N;
+  Index_ nnz = data.adjnnz;
+  auto adj_host_ldr = data.data_loader;
+
+  Index_ n_groups          = adj_host_ldr.n_groups;
+  Index_ n_rows            = adj_host_ldr.n_rows;
+  const Index_* row_starts = adj_host_ldr.row_starts;
+  const Index_* row_steps  = adj_host_ldr.row_steps;
+  Index_ max_rows          = adj_host_ldr.max_rows;
+  Index_ stride            = adj_host_ldr.stride;
+
+  ML::pinned_host_vector<Index_> host_vd(batch_size);
+  ML::pinned_host_vector<bool> host_adj((batch_size * N) + 8);
+  ML::pinned_host_vector<Index_> host_ex_scan(batch_size);
+  raft::update_host((bool*)host_adj.data(), data.adj, batch_size * N, stream);
+  raft::update_host(host_vd.data(), data.vd, batch_size, stream);
+  handle.sync_stream(stream);
+  size_t adjgraph_size = size_t(nnz);
+  ML::pinned_host_vector<Index_> host_adj_graph(adjgraph_size);
+  for (Index_ b = 0; b < n_groups; ++b) {
+    Index_ start_idx = row_starts[b];
+    Index_ step = row_steps[b];
+    for (Index_ i = 0; i < step; ++i) {
+      for (Index_ j = 0; j < step; ++j) {
+        if (host_adj[(i + start_idx) * N + j + start_idx]) {
+          host_adj_graph[k] = j + start_idx;
+          k                 = k + 1;
+        }
+      }
+    }
+  }
+
+  host_ex_scan[0] = Index_(0);
+  for (Index_ i = 1; i < batch_size; i++)
+    host_ex_scan[i] = host_ex_scan[i - 1] + host_vd[i - 1];
+  raft::update_device(data.adj_graph, host_adj_graph.data(), adjgraph_size, stream);
+  raft::update_device(data.ex_scan, host_ex_scan.data(), batch_size, stream);
+}
+
 }  // namespace Naive
 }  // namespace AdjGraph
 }  // namespace Dbscan

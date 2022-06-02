@@ -15,58 +15,62 @@
  */
 #include <algorithm>
 #include <cmath>
+#include <ctime>
 #include <cuda_runtime.h>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <map>
+#include <numeric>
 #include <sstream>
 #include <vector>
-#include <numeric>
-#include <ctime>
 
 #include <raft/handle.hpp>
 
 #include <cuml/cluster/dbscan.hpp>
 
+namespace {
+const int n_loop = 30;
+}
+
 #ifndef CUDA_RT_CALL
 #define CUDA_RT_CALL(call)                                                    \
-    {                                                                           \
-        cudaError_t cudaStatus = call;                                            \
-        if (cudaSuccess != cudaStatus)                                            \
-        fprintf(stderr,                                                         \
-                "ERROR: CUDA RT call \"%s\" in line %d of file %s failed with " \
-                "%s (%d).\n",                                                   \
-                #call,                                                          \
-                __LINE__,                                                       \
-                __FILE__,                                                       \
-                cudaGetErrorString(cudaStatus),                                 \
-                cudaStatus);                                                    \
-    }
+  {                                                                           \
+    cudaError_t cudaStatus = call;                                            \
+    if (cudaSuccess != cudaStatus)                                            \
+      fprintf(stderr,                                                         \
+              "ERROR: CUDA RT call \"%s\" in line %d of file %s failed with " \
+              "%s (%d).\n",                                                   \
+              #call,                                                          \
+              __LINE__,                                                       \
+              __FILE__,                                                       \
+              cudaGetErrorString(cudaStatus),                                 \
+              cudaStatus);                                                    \
+  }
 #endif  // CUDA_RT_CALL
 
 template <typename T>
 T get_argval(char** begin, char** end, const std::string& arg, const T default_val)
 {
-    T argval   = default_val;
-    char** itr = std::find(begin, end, arg);
-    if (itr != end && ++itr != end) {
-        std::istringstream inbuf(*itr);
-        inbuf >> argval;
-    }
-    return argval;
+  T argval   = default_val;
+  char** itr = std::find(begin, end, arg);
+  if (itr != end && ++itr != end) {
+    std::istringstream inbuf(*itr);
+    inbuf >> argval;
+  }
+  return argval;
 }
 
 bool get_arg(char** begin, char** end, const std::string& arg)
 {
-    char** itr = std::find(begin, end, arg);
-    if (itr != end) { return true; }
-    return false;
+  char** itr = std::find(begin, end, arg);
+  if (itr != end) { return true; }
+  return false;
 }
 
 void printUsage()
 {
-    std::cout << "To run default example use:" << std::endl
+  std::cout << "To run default example use:" << std::endl
             << "    dbscan_example [-dev_id <GPU id>]" << std::endl
             << "For other cases:" << std::endl
             << "    dbscan_example [-dev_id <GPU id>] -input <samples-file> "
@@ -74,294 +78,322 @@ void printUsage()
             << "[-min_pts <minimum number of samples in a cluster>] "
             << "[-eps <maximum distance between any two samples of a cluster>] "
             << "[-max_bytes_per_batch <maximum memory to use (in bytes) for batch size "
-            "calculation>] "
+               "calculation>] "
             << std::endl;
-    return;
+  return;
 }
 
 void generateDefaultDataset(std::vector<float>& inputData,
                             size_t batchSize,
-                            int *pNbRows,
+                            int* pNbRows,
                             size_t nCols,
                             int minPts,
                             float eps,
                             size_t& max_bytes_per_batch)
 {
-    constexpr size_t MAX_NUM_ROWS = 10000;
-    constexpr size_t MAX_NUM_COLS = 1024;
-    size_t nRows = 0;
-    for(int b = 0; b < batchSize; ++b) {
-        nRows += pNbRows[b];
-    }
-    assert(nRows <= MAX_NUM_ROWS);
-    assert(nCols <= MAX_NUM_COLS);
+  constexpr size_t MAX_NUM_ROWS = 10000;
+  constexpr size_t MAX_NUM_COLS = 1024;
+  size_t nRows                  = 0;
+  for (int b = 0; b < batchSize; ++b) {
+    nRows += pNbRows[b];
+  }
+  assert(nRows <= MAX_NUM_ROWS);
+  assert(nCols <= MAX_NUM_COLS);
 
-    std::vector<float> vData(nRows * nCols, 0.f);
-    std::srand(std::time(nullptr));
-    for(auto &it : vData) {
-        // it = static_cast<float>(std::rand()) / RAND_MAX * 1.0 - 0.5;
-        it = static_cast<float>(std::rand()) / RAND_MAX * 3.0 - 1.5;
-    }
+  std::vector<float> vData(nRows * nCols, 0.f);
+  std::srand(std::time(nullptr));
+  for (auto& it : vData) {
+    // it = static_cast<float>(std::rand()) / RAND_MAX * 1.0 - 0.5;
+    it = static_cast<float>(std::rand()) / RAND_MAX * 3.0 - 1.5;
+  }
 
-    max_bytes_per_batch = 0;  // allow algorithm to set this
-    inputData.assign(vData.begin(), vData.end());
+  max_bytes_per_batch = 0;  // allow algorithm to set this
+  inputData.assign(vData.begin(), vData.end());
 }
 
 int main(int argc, char* argv[])
 {
-    int devId         = get_argval<int>(argv, argv + argc, "-dev_id", 0);
-    int val           = get_argval<int>(argv, argv + argc, "-val", 20);
-    size_t nGroups    = get_argval<size_t>(argv, argv + argc, "-num_groups", 1);
-    size_t nCols      = get_argval<size_t>(argv, argv + argc, "-num_features", 3);
-    std::string input = get_argval<std::string>(argv, argv + argc, "-input", std::string(""));
-    int minPts        = get_argval<int>(argv, argv + argc, "-min_pts", 3);
-    float eps         = get_argval<float>(argv, argv + argc, "-eps", 1.0f);
-    size_t max_bytes_per_batch =
-        get_argval<size_t>(argv, argv + argc, "-max_bytes_per_batch", (size_t)13e9);
+  int devId         = get_argval<int>(argv, argv + argc, "-dev_id", 0);
+  int base          = get_argval<int>(argv, argv + argc, "-base", 20);
+  size_t nGroups    = get_argval<size_t>(argv, argv + argc, "-num_groups", 1);
+  size_t nCols      = get_argval<size_t>(argv, argv + argc, "-num_features", 3);
+  std::string input = get_argval<std::string>(argv, argv + argc, "-input", std::string(""));
+  int minPts        = get_argval<int>(argv, argv + argc, "-min_pts", 3);
+  float eps         = get_argval<float>(argv, argv + argc, "-eps", 1.0f);
+  bool fixed        = static_cast<bool>(get_argval<int>(argv, argv + argc, "-fixed", 0));
+  size_t max_bytes_per_batch =
+    get_argval<size_t>(argv, argv + argc, "-max_bytes_per_batch", (size_t)13e9);
 
-    {
-        cudaError_t cudaStatus = cudaSuccess;
-        cudaStatus             = cudaSetDevice(devId);
-        if (cudaSuccess != cudaStatus) {
-            std::cerr << "ERROR: Could not select CUDA device with the id: " << devId << "("
-                        << cudaGetErrorString(cudaStatus) << ")" << std::endl;
-            return 1;
-        }
-        cudaStatus = cudaFree(0);
-        if (cudaSuccess != cudaStatus) {
-        std::cerr << "ERROR: Could not initialize CUDA on device: " << devId << "("
-                    << cudaGetErrorString(cudaStatus) << ")" << std::endl;
-        return 1;
-        }
+  {
+    cudaError_t cudaStatus = cudaSuccess;
+    cudaStatus             = cudaSetDevice(devId);
+    if (cudaSuccess != cudaStatus) {
+      std::cerr << "ERROR: Could not select CUDA device with the id: " << devId << "("
+                << cudaGetErrorString(cudaStatus) << ")" << std::endl;
+      return 1;
     }
-
-    std::srand(std::time(nullptr));
-    std::vector<int> vConsRows;
-    for(int i = 0; i < nGroups; ++i) {
-        vConsRows.emplace_back(rand() / RAND_MAX * val + val);
+    cudaStatus = cudaFree(0);
+    if (cudaSuccess != cudaStatus) {
+      std::cerr << "ERROR: Could not initialize CUDA on device: " << devId << "("
+                << cudaGetErrorString(cudaStatus) << ")" << std::endl;
+      return 1;
     }
-    // const std::vector<int> vConsRows{23, 24, 25, 25, 26, 26, 27, 27, 28, 28, 29, 29, 30, 30, 31, 31, 32, 32, 33, 33, 40, 40};
-    // const std::vector<int> vConsRows{2300, 2400, 2500, 2500, 2600, 2600, 2700, 2700, 2800, 2800, 2900, 2900, 3000, 3000, 3100, 3100, 3200, 3200, 3300, 3300, 4000, 4000};
-    assert(nGroups <= vConsRows.size());
-    std::vector<int> vRows(nGroups, 1);
-    vRows.assign(vConsRows.begin(), vConsRows.begin() + nGroups);
-    size_t nTotalRows = std::accumulate(vRows.begin(), vRows.end(), 0);
+  }
 
-    std::vector<float> h_inputData;
+  std::srand(std::time(nullptr));
+  std::vector<int> vConsRows;
+  for (int i = 0; i < nGroups; ++i) {
+    vConsRows.emplace_back(((fixed) ? 0 : rand() % base) + base);
+  }
+  // const std::vector<int> vConsRows{23, 24, 25, 25, 26, 26, 27, 27, 28, 28, 29, 29, 30, 30, 31,
+  // 31, 32, 32, 33, 33, 40, 40}; const std::vector<int> vConsRows{2300, 2400, 2500, 2500, 2600,
+  // 2600, 2700, 2700, 2800, 2800, 2900, 2900, 3000, 3000, 3100, 3100, 3200, 3200, 3300, 3300, 4000,
+  // 4000};
+  assert(nGroups <= vConsRows.size());
+  std::vector<int> vRows(nGroups, 1);
+  std::vector<int64_t> vRows64(nGroups, 1);
+  vRows.assign(vConsRows.begin(), vConsRows.begin() + nGroups);
+  size_t nTotalRows = std::accumulate(vRows.begin(), vRows.end(), 0);
 
-    if (input == "") {
-        // Samples file not specified, run with defaults
-        std::cout << "Samples file not specified. (-input option)" << std::endl;
-        std::cout << "Running with default dataset:" << std::endl;
-        generateDefaultDataset(h_inputData, nGroups, vRows.data(), nCols, minPts, eps, max_bytes_per_batch);
-    } else if (vRows.empty() || nCols == 0) {
-        // Samples file specified but nRows and nCols is not specified
-        // Print usage and quit
-        std::cerr << "Samples file: " << input << std::endl;
-        std::cerr << "Incorrect value for (num_samples x num_features): (" << vRows.size() << " x " << nCols
-                  << ")" << std::endl;
-        printUsage();
-        return 1;
-    } else {
-        // All options are correctly specified
-        // Try to read input file now
-        std::ifstream input_stream(input, std::ios::in);
-        if (!input_stream.is_open()) {
-            std::cerr << "ERROR: Could not open input file " << input << std::endl;
-            return 1;
-        }
-        std::cout << "Trying to read samples from " << input << std::endl;
-        h_inputData.reserve(nTotalRows * nCols);
-        float val = 0.0;
-        while (input_stream >> val && h_inputData.size() <= nTotalRows * nCols) {
-            h_inputData.push_back(val);
-        }
-        if (h_inputData.size() != nTotalRows * nCols) {
-            std::cerr << "ERROR: Read " << h_inputData.size() << " from " << input
-                      << ", while expecting to read: " << nTotalRows * nCols << " (num_samples*num_features)"
-                      << std::endl;
-            return 1;
-        }
+  std::vector<float> h_inputData;
+
+  if (input == "") {
+    // Samples file not specified, run with defaults
+    std::cout << "Samples file not specified. (-input option)" << std::endl;
+    std::cout << "Running with default dataset:" << std::endl;
+    generateDefaultDataset(
+      h_inputData, nGroups, vRows.data(), nCols, minPts, eps, max_bytes_per_batch);
+  } else if (vRows.empty() || nCols == 0) {
+    // Samples file specified but nRows and nCols is not specified
+    // Print usage and quit
+    std::cerr << "Samples file: " << input << std::endl;
+    std::cerr << "Incorrect value for (num_samples x num_features): (" << vRows.size() << " x "
+              << nCols << ")" << std::endl;
+    printUsage();
+    return 1;
+  } else {
+    // All options are correctly specified
+    // Try to read input file now
+    std::ifstream input_stream(input, std::ios::in);
+    if (!input_stream.is_open()) {
+      std::cerr << "ERROR: Could not open input file " << input << std::endl;
+      return 1;
     }
-
-    // For test
-    {
-        // h_inputData = std::vector<float>{-7.67792, 9.40799, -4.89711, 
-        //                                  -1.00162, 6.63055, -7.56435, 
-        //                                  7.87979, -2.54078, -3.3965, 
-        //                                  -7.47557, 9.35994, -4.76174, 
-        //                                  -7.58246, 9.26786, -4.74305, 
-        //                                  -1.02078, 6.96886, -7.65972, 
-        //                                  -1.02734, 6.95183, -7.63955, 
-        //                                  8.09822, -2.27863, -3.26218, 
-        //                                  8.08325, -2.5214, -3.31773, 
-        //                                  0.0, 0.0, 0.0, 
-        //                                  0.0, 0.0, 0.0, 
-        //                                  0.0, 0.0, 0.0, 
-        //                                  0.0, 0.0, 0.0, 
-        //                                  0.0, 0.0, 0.0, 
-        //                                  0.0, 0.0, 0.0, };
-        // nGroups = 2;
-        // vRows = std::vector<int>{6, 9};
-        // nTotalRows = std::accumulate(vRows.begin(), vRows.end(), 0);
-        // nCols = 3;
-        // minPts = 3;
-        // eps = 1.0;
+    std::cout << "Trying to read samples from " << input << std::endl;
+    h_inputData.reserve(nTotalRows * nCols);
+    float val = 0.0;
+    while (input_stream >> val && h_inputData.size() <= nTotalRows * nCols) {
+      h_inputData.push_back(val);
     }
-    
+    if (h_inputData.size() != nTotalRows * nCols) {
+      std::cerr << "ERROR: Read " << h_inputData.size() << " from " << input
+                << ", while expecting to read: " << nTotalRows * nCols
+                << " (num_samples*num_features)" << std::endl;
+      return 1;
+    }
+  }
 
-    cudaStream_t stream;
-    CUDA_RT_CALL(cudaStreamCreate(&stream));
-    raft::handle_t handle{stream};
+  // For test
+  {
+    // h_inputData = std::vector<float>{-7.67792, 9.40799, -4.89711,
+    //                                  -1.00162, 6.63055, -7.56435,
+    //                                  7.87979, -2.54078, -3.3965,
+    //                                  -7.47557, 9.35994, -4.76174,
+    //                                  -7.58246, 9.26786, -4.74305,
+    //                                  -1.02078, 6.96886, -7.65972,
+    //                                  -1.02734, 6.95183, -7.63955,
+    //                                  8.09822, -2.27863, -3.26218,
+    //                                  8.08325, -2.5214, -3.31773,
+    //                                  0.0, 0.0, 0.0,
+    //                                  0.0, 0.0, 0.0,
+    //                                  0.0, 0.0, 0.0,
+    //                                  0.0, 0.0, 0.0,
+    //                                  0.0, 0.0, 0.0,
+    //                                  0.0, 0.0, 0.0, };
+    // nGroups = 2;
+    // vRows = std::vector<int>{6, 9};
+    // nTotalRows = std::accumulate(vRows.begin(), vRows.end(), 0);
+    // nCols = 3;
+    // minPts = 3;
+    // eps = 1.0;
+  }
 
-    std::vector<int> h_labels(nTotalRows);
-    int* d_labels      = nullptr;
-    float* d_inputData = nullptr;
+  cudaStream_t stream;
+  CUDA_RT_CALL(cudaStreamCreate(&stream));
+  raft::handle_t handle{stream};
 
-    // CUDA_RT_CALL(cudaMalloc(&d_labels, nTotalRows * sizeof(int)));
-    // CUDA_RT_CALL(cudaMalloc(&d_inputData, nTotalRows * nCols * sizeof(float)));
-    // CUDA_RT_CALL(cudaMemcpyAsync(d_inputData,
-    //                             h_inputData.data(),
-    //                             nTotalRows * nCols * sizeof(float),
-    //                             cudaMemcpyHostToDevice,
-    //                             stream));
+  std::vector<int> h_labels(nTotalRows);
+  std::vector<int64_t> h_labels64(nTotalRows);
 
-    std::cout << "Running DBSCAN with following parameters:" << std::endl
-              << "Number of groups - " << nGroups << std::endl 
-              << "Number of samples - " << nTotalRows << std::endl
-              << "Number of features - " << nCols << std::endl
-              << "min_pts - " << minPts << std::endl
-              << "eps - " << eps << std::endl
-              << "max_bytes_per_batch - " << max_bytes_per_batch << std::endl;
+  std::cout << "Running DBSCAN with following parameters:" << std::endl
+            << "Number of groups - " << nGroups << std::endl
+            << "Number of samples - " << nTotalRows << std::endl
+            << "Number of features - " << nCols << std::endl
+            << "min_pts - " << minPts << std::endl
+            << "eps - " << eps << std::endl
+            << "max_bytes_per_batch - " << max_bytes_per_batch << std::endl;
 
-    // std::cout << std::endl << "=====\t batched version\t =====" << std::endl;
-    // ML::Dbscan::fit(handle,
-    //                 d_inputData,
-    //                 nGroups,
-    //                 vRows.data(),
-    //                 nTotalRows,
-    //                 nCols,
-    //                 eps,
-    //                 minPts,
-    //                 raft::distance::L2SqrtUnexpanded,
-    //                 d_labels,
-    //                 nullptr,
-    //                 max_bytes_per_batch,
-    //                 CUML_LEVEL_INFO,
-    //                 false);
-
-    // CUDA_RT_CALL(cudaMemcpyAsync(h_labels.data(), d_labels, nTotalRows * sizeof(int), cudaMemcpyDeviceToHost, stream));
-    // CUDA_RT_CALL(cudaStreamSynchronize(stream));
-
-    // for(int b = 0, start_idx = 0; b < nGroups; ++b) {
-    //     std::cout << "Group " << b << " : ";
-    //     for(int i = 0; i < vRows[b]; ++i) {
-    //         std::cout << h_labels[start_idx++] << " ";
-    //     }
-    //     std::cout << std::endl;
-    // }
-
+  /* print inputData */
+  // std::for_each(h_inputData.begin(), h_inputData.end(), [=](float x){ std::cout << x << " "; });
+  // std::cout << std::endl;
+  std::cout << std::endl << "=====\t compare version\t =====" << std::endl;
+  double compTime = 0.0;
+  std::vector<std::vector<int>> h_all_labels;
+  int _startRow = 0;
+  for (int b = 0; b < nGroups; ++b) {
+    int _nRows = vRows.at(b);
+    int _nCols = nCols;
+    std::vector<float> _h_inputData(_nRows * _nCols, 0.0);
+    _h_inputData.assign(h_inputData.begin() + _startRow * _nCols,
+                        h_inputData.begin() + (_startRow + _nRows) * _nCols);
     /* print inputData */
-    // std::for_each(h_inputData.begin(), h_inputData.end(), [=](float x){ std::cout << x << " "; }); std::cout << std::endl;
-    std::cout << std::endl << "=====\t compare version\t =====" << std::endl;
-    double compTime = 0.0;
-    std::vector<std::vector<int>> h_all_labels;
-    int _startRow = 0;
-    for(int b = 0; b < nGroups; ++b) {
-        int _nRows = vRows.at(b);
-        int _nCols = nCols;
-        std::vector<float> _h_inputData(_nRows * _nCols, 0.0);
-        _h_inputData.assign(h_inputData.begin() + _startRow * _nCols, h_inputData.begin() + (_startRow + _nRows) * _nCols);
-        /* print inputData */
-        // std::for_each(_h_inputData.begin(), _h_inputData.end(), [=](float x){ std::cout << x << " "; }); std::cout << std::endl;
+    // std::for_each(_h_inputData.begin(), _h_inputData.end(), [=](float x){ std::cout << x << " ";
+    // }); std::cout << std::endl;
 
-        std::vector<int> _h_labels(_nRows, 0);
-        int *_d_labels = nullptr;
-        float *_d_inputData = nullptr;
-        CUDA_RT_CALL(cudaMalloc(&_d_labels, _h_labels.size() * sizeof(int)));
-        CUDA_RT_CALL(cudaMalloc(&_d_inputData, _h_inputData.size() * sizeof(float)));
-        CUDA_RT_CALL(cudaMemcpyAsync(_d_inputData, _h_inputData.data(), _h_inputData.size() * sizeof(float), cudaMemcpyHostToDevice, stream));
+    std::vector<int> _h_labels(_nRows, 0);
+    int* _d_labels      = nullptr;
+    float* _d_inputData = nullptr;
+    CUDA_RT_CALL(cudaMalloc(&_d_labels, _h_labels.size() * sizeof(int)));
+    CUDA_RT_CALL(cudaMalloc(&_d_inputData, _h_inputData.size() * sizeof(float)));
+    CUDA_RT_CALL(cudaMemcpyAsync(_d_inputData,
+                                 _h_inputData.data(),
+                                 _h_inputData.size() * sizeof(float),
+                                 cudaMemcpyHostToDevice,
+                                 stream));
 
-        auto start_time = std::chrono::high_resolution_clock::now();
-        for(int i = 0; i < 100; ++i)
-            ML::Dbscan::fit(handle,
-                            _d_inputData,
-                            _nRows,
-                            _nCols,
-                            eps,
-                            minPts,
-                            raft::distance::L2SqrtUnexpanded,
-                            _d_labels,
-                            nullptr,
-                            max_bytes_per_batch,
-                            CUML_LEVEL_INFO,
-                            false);
+    auto start_time = std::chrono::high_resolution_clock::now();
+    for (int i = 0; i < n_loop; ++i)
+      ML::Dbscan::fit(handle,
+                      _d_inputData,
+                      _nRows,
+                      _nCols,
+                      eps,
+                      minPts,
+                      raft::distance::L2SqrtUnexpanded,
+                      _d_labels,
+                      nullptr,
+                      max_bytes_per_batch,
+                      CUML_LEVEL_INFO,
+                      false);
 
-        CUDA_RT_CALL(cudaMemcpyAsync(_h_labels.data(), _d_labels, _h_labels.size() * sizeof(int), cudaMemcpyDeviceToHost, stream));
-        CUDA_RT_CALL(cudaStreamSynchronize(stream));
-        compTime += std::chrono::duration_cast<std::chrono::duration<double>>(std::chrono::high_resolution_clock::now() - start_time).count();
-        h_all_labels.emplace_back(_h_labels);
+    CUDA_RT_CALL(cudaMemcpyAsync(
+      _h_labels.data(), _d_labels, _h_labels.size() * sizeof(int), cudaMemcpyDeviceToHost, stream));
+    CUDA_RT_CALL(cudaStreamSynchronize(stream));
+    compTime += std::chrono::duration_cast<std::chrono::duration<double>>(
+                  std::chrono::high_resolution_clock::now() - start_time)
+                  .count();
+    h_all_labels.emplace_back(_h_labels);
 
-        CUDA_RT_CALL(cudaFree(_d_labels));
-        CUDA_RT_CALL(cudaFree(_d_inputData));
-        _startRow += _nRows;
+    CUDA_RT_CALL(cudaFree(_d_labels));
+    CUDA_RT_CALL(cudaFree(_d_inputData));
+    _startRow += _nRows;
+  }
+  for (int b = 0; b < h_all_labels.size(); ++b) {
+    // std::vector<int> _h_labels = h_all_labels.at(b);
+    // std::cout << "Group " << b << " : ";
+    // std::for_each(_h_labels.begin(), _h_labels.end(), [=](int x) { std::cout << x << " "; });
+    // std::cout << std::endl;
+  }
+
+  sleep(3);
+  std::cout << std::endl << "=====\t batched version\t =====" << std::endl;
+  double batchTime   = 0.0;
+  void* d_labels     = nullptr;
+  float* d_inputData = nullptr;
+  int MAX_LABEL      = std::numeric_limits<int>::max();
+  bool bInt64        = (MAX_LABEL / nTotalRows) < nTotalRows;
+  if (bInt64) {
+    for (int i = 0; i < vRows.size(); ++i) {
+      vRows64.at(i) = vRows.at(i);
     }
-    for(int b = 0; b < h_all_labels.size(); ++b) {
-        std::vector<int> _h_labels = h_all_labels.at(b);
-        std::cout << "Group " << b << " : ";
-        std::for_each(_h_labels.begin(), _h_labels.end(), [=](int x){ std::cout << x << " "; }); std::cout << std::endl;
-    }
+    std::cout << "Use int64_t" << std::endl;
+  }
 
-    sleep(3);
-    std::cout << std::endl << "=====\t batched version\t =====" << std::endl;
-    double batchTime = 0.0;
+  std::chrono::high_resolution_clock::time_point start_time;
+  if (bInt64) {
+    CUDA_RT_CALL(cudaMalloc(&d_labels, nTotalRows * sizeof(int64_t)));
+    CUDA_RT_CALL(cudaMalloc(&d_inputData, nTotalRows * nCols * sizeof(float)));
+    CUDA_RT_CALL(cudaMemcpyAsync(d_inputData,
+                                 h_inputData.data(),
+                                 nTotalRows * nCols * sizeof(float),
+                                 cudaMemcpyHostToDevice,
+                                 stream));
+    start_time = std::chrono::high_resolution_clock::now();
+    for (int i = 0; i < n_loop; ++i)
+      ML::Dbscan::fit(handle,
+                      d_inputData,
+                      (int64_t)nGroups,
+                      vRows64.data(),
+                      (int64_t)nTotalRows,
+                      (int64_t)nCols,
+                      eps,
+                      minPts,
+                      raft::distance::L2SqrtUnexpanded,
+                      (int64_t*)d_labels,
+                      nullptr,
+                      max_bytes_per_batch,
+                      CUML_LEVEL_INFO,
+                      false);
+    CUDA_RT_CALL(cudaMemcpyAsync(
+      h_labels64.data(), d_labels, nTotalRows * sizeof(int64_t), cudaMemcpyDeviceToHost, stream));
+    CUDA_RT_CALL(cudaStreamSynchronize(stream));
+    batchTime += std::chrono::duration_cast<std::chrono::duration<double>>(
+                   std::chrono::high_resolution_clock::now() - start_time)
+                   .count();
+  } else {
     CUDA_RT_CALL(cudaMalloc(&d_labels, nTotalRows * sizeof(int)));
     CUDA_RT_CALL(cudaMalloc(&d_inputData, nTotalRows * nCols * sizeof(float)));
     CUDA_RT_CALL(cudaMemcpyAsync(d_inputData,
-                                h_inputData.data(),
-                                nTotalRows * nCols * sizeof(float),
-                                cudaMemcpyHostToDevice,
-                                stream));
-    auto start_time = std::chrono::high_resolution_clock::now();
-    for(int i = 0; i < 100; ++i)
-        ML::Dbscan::fit(handle,
-                        d_inputData,
-                        nGroups,
-                        vRows.data(),
-                        nTotalRows,
-                        nCols,
-                        eps,
-                        minPts,
-                        raft::distance::L2SqrtUnexpanded,
-                        d_labels,
-                        nullptr,
-                        max_bytes_per_batch,
-                        CUML_LEVEL_INFO,
-                        false);
-
-    CUDA_RT_CALL(cudaMemcpyAsync(h_labels.data(), d_labels, nTotalRows * sizeof(int), cudaMemcpyDeviceToHost, stream));
+                                 h_inputData.data(),
+                                 nTotalRows * nCols * sizeof(float),
+                                 cudaMemcpyHostToDevice,
+                                 stream));
+    start_time = std::chrono::high_resolution_clock::now();
+    for (int i = 0; i < n_loop; ++i)
+      ML::Dbscan::fit(handle,
+                      d_inputData,
+                      nGroups,
+                      vRows.data(),
+                      nTotalRows,
+                      nCols,
+                      eps,
+                      minPts,
+                      raft::distance::L2SqrtUnexpanded,
+                      (int*)d_labels,
+                      nullptr,
+                      max_bytes_per_batch,
+                      CUML_LEVEL_INFO,
+                      false);
+    CUDA_RT_CALL(cudaMemcpyAsync(
+      h_labels.data(), d_labels, nTotalRows * sizeof(int), cudaMemcpyDeviceToHost, stream));
     CUDA_RT_CALL(cudaStreamSynchronize(stream));
-    batchTime += std::chrono::duration_cast<std::chrono::duration<double>>(std::chrono::high_resolution_clock::now() - start_time).count();
+    batchTime += std::chrono::duration_cast<std::chrono::duration<double>>(
+                   std::chrono::high_resolution_clock::now() - start_time)
+                   .count();
+  }
 
-    for(int b = 0, start_idx = 0; b < nGroups; ++b) {
-        std::cout << "Group " << b << " : ";
-        for(int i = 0; i < vRows[b]; ++i) {
-            std::cout << h_labels[start_idx++] << " ";
-        }
-        std::cout << std::endl;
+  for (int b = 0, start_idx = 0; b < nGroups; ++b) {
+    // std::cout << "Group " << b << " : ";
+    // for (int i = 0; i < vRows[b]; ++i) {
+    //   std::cout << h_labels[start_idx++] << " ";
+    // }
+    // std::cout << std::endl;
+  }
+
+  int _diff = 0;
+  for (int b = 0, _idx = 0; b < h_all_labels.size(); ++b) {
+    std::vector<int> _h_labels = h_all_labels.at(b);
+    for (int i = 0; i < _h_labels.size(); ++i) {
+      _diff += ((bInt64) ? h_labels64.at(_idx++) : h_labels.at(_idx++)) - _h_labels.at(i);
     }
+  }
+  std::cout << "Diff is " << _diff << " comp_time = " << compTime
+            << " s, batch_time = " << batchTime << " s, speedup = " << compTime / batchTime
+            << std::endl;
 
-    int _diff = 0;
-    for(int b = 0, _idx = 0; b < h_all_labels.size(); ++b) {
-        std::vector<int> _h_labels = h_all_labels.at(b);
-        for(int i = 0; i < _h_labels.size(); ++i) {
-            _diff += h_labels.at(_idx++) - _h_labels.at(i);
-        }
-    } std::cout << "Diff is " << _diff << " comp_time = " << compTime << " s" << " batch_time = " << batchTime << " s" << std::endl;
-
-    CUDA_RT_CALL(cudaFree(d_labels));
-    CUDA_RT_CALL(cudaFree(d_inputData));
-    CUDA_RT_CALL(cudaStreamDestroy(stream));
-    CUDA_RT_CALL(cudaDeviceSynchronize());
-    return 0;
+  CUDA_RT_CALL(cudaFree(d_labels));
+  CUDA_RT_CALL(cudaFree(d_inputData));
+  CUDA_RT_CALL(cudaStreamDestroy(stream));
+  CUDA_RT_CALL(cudaDeviceSynchronize());
+  return 0;
 }

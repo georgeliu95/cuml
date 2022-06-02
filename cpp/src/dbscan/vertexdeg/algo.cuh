@@ -21,7 +21,8 @@
 #include <raft/spatial/knn/epsilon_neighborhood.hpp>
 
 #include "pack.h"
-#include "eps.cuh"
+// #include "eps.cuh"
+#include "eps_new.cuh"
 
 namespace ML {
 namespace Dbscan {
@@ -58,19 +59,59 @@ void launcher_batched(const raft::handle_t& handle,
                       index_t batch_size,
                       cudaStream_t stream)
 {
-    data.resetArray(stream, batch_size + 1);
+  data.resetArray(stream, batch_size + 1);
 
-    ASSERT(sizeof(index_t) == 4 || sizeof(index_t) == 8, "index_t should be 4 or 8 bytes");
+  ASSERT(sizeof(index_t) == 4 || sizeof(index_t) == 8, "index_t should be 4 or 8 bytes");
 
-    index_t m    = data.N;
-    index_t n    = min(data.N - start_vertex_id, batch_size);
-    index_t k    = data.D;
-    index_t lo   = data.lo;
-    index_t hi   = data.hi;
-    value_t eps2 = data.eps * data.eps;
+  index_t m    = data.N;
+  index_t n    = min(data.N - start_vertex_id, batch_size);
+  index_t k    = data.D;
+  index_t lo   = data.lo;
+  index_t hi   = data.hi;
+  value_t eps2 = data.eps * data.eps;
 
-    epsUnexpL2SqNeighborhoodBatched<value_t, index_t>(
-        data.adj, data.vd, data.x, data.x + start_vertex_id * k, m, n, k, lo, hi, eps2, stream);
+  epsUnexpL2SqNeighborhoodBatched<value_t, index_t>(
+    data.adj, data.vd, data.x, data.x + start_vertex_id * k, m, n, k, lo, hi, eps2, stream);
+}
+
+template <typename value_t, typename index_t = int>
+void launcher_batched_new(const raft::handle_t& handle,
+                          BatchedPack<value_t, index_t> data,
+                          index_t start_vertex_id,
+                          index_t batch_size,
+                          cudaStream_t stream)
+{
+  // data.resetArray(stream, batch_size + 1);
+
+  ASSERT(sizeof(index_t) == 4 || sizeof(index_t) == 8, "index_t should be 4 or 8 bytes");
+
+  index_t group_id   = data.group_id;
+  auto adj_host_ldr = data.data_loader;
+
+  index_t n_rows     = adj_host_ldr.n_rows;
+  index_t row_start  = adj_host_ldr.row_starts[group_id];
+  index_t row_step   = adj_host_ldr.row_steps[group_id];
+  index_t adj_stride = adj_host_ldr.stride;
+
+  index_t m    = row_step;
+  index_t n    = min(row_step - start_vertex_id, batch_size);
+  index_t k    = data.D;
+  value_t eps2 = data.eps * data.eps;
+  bool* adj    = data.adj + row_start;
+
+  epsUnexpL2SqNeighborhoodBatched<value_t, index_t>(adj,
+                                                    data.vd,
+                                                    data.vd_batch,
+                                                    data.vd_all,
+                                                    data.x,
+                                                    data.x + start_vertex_id * k,
+                                                    m,
+                                                    n,
+                                                    k,
+                                                    row_start,
+                                                    adj_stride,
+                                                    eps2,
+                                                    stream);
 }
 
 }  // namespace Algo

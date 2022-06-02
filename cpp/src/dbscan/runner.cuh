@@ -36,6 +36,20 @@
 
 #include <cstddef>
 
+#define PRINT_TEMPVAL false
+
+namespace {
+const bool bHost_x     = false;
+const bool bHost_vd    = false;
+const bool bHost_cpt   = false;
+const bool bHost_adj   = false;
+const bool bHost_adjg  = false;
+const bool bHost_adjl  = false;
+const bool bHost_ex    = false;
+const bool bHost_label = false;
+const bool bAll        = false;
+}  // namespace
+
 namespace ML {
 namespace Dbscan {
 
@@ -59,6 +73,74 @@ __global__ void relabelForSkl(Index_* labels, Index_ N, Index_ MAX_LABEL)
       --labels[tid];
     }
   }
+}
+
+template <typename Index_ = int>
+__global__ void relabelForSklBatchedKernel(Index_* labels,
+                                           const Index_* label_starts,
+                                           const Index_* label_steps,
+                                           const Index_* label_selects,
+                                           Index_ N,
+                                           Index_ n_groups,
+                                           Index_ MAX_LABEL)
+{
+  Index_ group_id = blockIdx.y * blockDim.y + threadIdx.y;
+  Index_ tid      = blockIdx.x * blockDim.x + threadIdx.x;
+
+  Index_ start_idx = label_starts[group_id];
+  Index_ step      = label_steps[group_id];
+  Index_ label_val = label_selects[group_id];
+  Index_ label_id  = tid + start_idx;
+
+  if (group_id < n_groups && tid < step && label_id < N) {
+    // printf(
+    //   "gid: %ld, tid: %ld, start_idx: %ld, step: %ld, label_val: %ld, label_id: %ld,
+    //   label:%ld\n",
+    //   (long int)group_id,
+    //   (long int)tid,
+    //   (long int)start_idx,
+    //   (long int)step,
+    //   (long int)label_val,
+    //   (long int)label_id,
+    //   (long int)(labels[label_id]));
+
+    if (labels[label_id] == MAX_LABEL) {
+      labels[label_id] = -1;
+    } else {
+      labels[label_id] -= label_val;
+    }
+  }
+}
+
+template <typename Index_ = int>
+__global__ void selectLabelStartsKernel(
+  const Index_* labels, Index_* selected, const Index_* label_starts, Index_ N, Index_ MAX_LABEL)
+{
+  /* need coalesced access */
+  Index_ tid = blockIdx.x * blockDim.x + threadIdx.x;
+  while (tid < N) {
+    Index_ start_idx = label_starts[tid];
+    Index_ stop_idx  = label_starts[tid + 1];
+    Index_ min_label = MAX_LABEL;
+    for (Index_ i = 0; i < stop_idx - start_idx; ++i) {
+      Index_ label_val = labels[start_idx + i];
+      min_label        = (min_label < label_val) ? min_label : label_val;
+    }
+    selected[tid] = (min_label == MAX_LABEL) ? 0 : min_label;
+    tid += gridDim.x * blockDim.x;
+  }
+}
+
+template <typename Index_ = int>
+__global__ void selectLabelStartsKernel(const Index_* labels,
+                                        Index_* selected,
+                                        const Index_* label_starts,
+                                        Index_ N,
+                                        Index_ n_groups,
+                                        Index_ MAX_LABEL)
+{
+  Index_ tid     = blockIdx.x * blockDim.x + threadIdx.x;
+  Index_ warp_id = tid % warpSize;
 }
 
 /**
@@ -199,45 +281,45 @@ std::size_t run(const raft::handle_t& handle,
     CorePoints::compute<Index_>(handle, vd, core_pts, min_pts, start_vertex_id, n_points, stream);
     raft::common::nvtx::pop_range();
 
-    {
-      // std::vector<Index_> host_vd(n_points + 1, 0);
-      // RAFT_CUDA_TRY(cudaMemcpyAsync(
-      //   host_vd.data(), vd, host_vd.size() * sizeof(Index_), cudaMemcpyDeviceToHost, stream));
-      // RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
-      // std::cout << "Batch " << i << " vd:" << std::endl;
-      // std::for_each(host_vd.begin(), host_vd.end(), [=](Index_ x) { std::cout << x << " "; });
-      // std::cout << std::endl;
+    if (bHost_vd && bAll) {
+      std::vector<Index_> host_vd(n_points + 1, 0);
+      RAFT_CUDA_TRY(cudaMemcpyAsync(
+        host_vd.data(), vd, host_vd.size() * sizeof(Index_), cudaMemcpyDeviceToHost, stream));
+      RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
+      std::cout << "Batch " << i << " vd:" << std::endl;
+      std::for_each(host_vd.begin(), host_vd.end(), [=](Index_ x) { std::cout << x << " "; });
+      std::cout << std::endl;
     }
   }
 
-  {
-    // bool host_adj[N * batch_size];
-    // RAFT_CUDA_TRY(cudaMemcpyAsync(
-    //   host_adj, adj, N * batch_size * sizeof(bool), cudaMemcpyDeviceToHost, stream));
-    // RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
-    // std::cout << "Adj:" << std::endl;
-    // for (size_t r = 0; r < batch_size; ++r) {
-    //   for (int c = 0; c < N; ++c) {
-    //     std::cout << host_adj[r * N + c] << " ";
-    //   }
-    //   std::cout << std::endl;
-    // }
-    // std::cout << std::endl;
+  if (bHost_adj && bAll) {
+    bool host_adj[N * batch_size];
+    RAFT_CUDA_TRY(cudaMemcpyAsync(
+      host_adj, adj, N * batch_size * sizeof(bool), cudaMemcpyDeviceToHost, stream));
+    RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
+    std::cout << "Adj:" << std::endl;
+    for (size_t r = 0; r < batch_size; ++r) {
+      for (int c = 0; c < N; ++c) {
+        std::cout << host_adj[r * N + c] << " ";
+      }
+      std::cout << std::endl;
+    }
+    std::cout << std::endl;
   }
 
   // 2. Exchange with the other workers
   if (opg) CorePoints::exchange(handle, core_pts, N, start_row, stream);
 
-  {
-    // bool host_corepts[N];
-    // RAFT_CUDA_TRY(
-    //   cudaMemcpyAsync(host_corepts, core_pts, N * sizeof(bool), cudaMemcpyDeviceToHost, stream));
-    // RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
-    // std::cout << "core_pts:" << std::endl;
-    // for (auto it : host_corepts) {
-    //   std::cout << it << " ";
-    // };
-    // std::cout << std::endl;
+  if (bHost_cpt && bAll) {
+    bool host_corepts[N];
+    RAFT_CUDA_TRY(
+      cudaMemcpyAsync(host_corepts, core_pts, N * sizeof(bool), cudaMemcpyDeviceToHost, stream));
+    RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
+    std::cout << "core_pts:" << std::endl;
+    for (auto it : host_corepts) {
+      std::cout << it << " ";
+    };
+    std::cout << std::endl;
   }
 
   // Compute the labelling for the owned part of the graph
@@ -263,9 +345,7 @@ std::size_t run(const raft::handle_t& handle,
     raft::update_host(&curradjlen, vd + n_points, 1, stream);
     handle.sync_stream(stream);
 
-    {
-      // std::cout << "curradjlen(" << i << ") " << curradjlen << " ";
-    }
+    if (bHost_adjl && bAll) { std::cout << "curradjlen(" << i << ") " << curradjlen << " "; }
 
     CUML_LOG_DEBUG("--> Computing adjacency graph with %ld nnz.", (unsigned long)curradjlen);
     raft::common::nvtx::push_range("Trace::Dbscan::AdjGraph");
@@ -277,30 +357,30 @@ std::size_t run(const raft::handle_t& handle,
       handle, adj, vd, adj_graph.data(), curradjlen, ex_scan, N, algo_adj, n_points, stream);
     raft::common::nvtx::pop_range();
 
-    {
-      // std::vector<Index_> host_exs(n_points, 0);
-      // RAFT_CUDA_TRY(cudaMemcpyAsync(host_exs.data(),
-      //                               ex_scan,
-      //                               host_exs.size() * sizeof(Index_),
-      //                               cudaMemcpyDeviceToHost,
-      //                               stream));
-      // RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
-      // std::cout << "Batch " << i << " ex_scan:" << std::endl;
-      // std::for_each(host_exs.begin(), host_exs.end(), [=](Index_ x) { std::cout << x << " "; });
-      // std::cout << std::endl;
+    if (bHost_ex && bAll) {
+      std::vector<Index_> host_exs(n_points, 0);
+      RAFT_CUDA_TRY(cudaMemcpyAsync(host_exs.data(),
+                                    ex_scan,
+                                    host_exs.size() * sizeof(Index_),
+                                    cudaMemcpyDeviceToHost,
+                                    stream));
+      RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
+      std::cout << "Batch " << i << " ex_scan:" << std::endl;
+      std::for_each(host_exs.begin(), host_exs.end(), [=](Index_ x) { std::cout << x << " "; });
+      std::cout << std::endl;
     }
 
-    {
-      // std::vector<Index_> host_adjg(maxadjlen, 0);
-      // RAFT_CUDA_TRY(cudaMemcpyAsync(host_adjg.data(),
-      //                               adj_graph.data(),
-      //                               host_adjg.size() * sizeof(Index_),
-      //                               cudaMemcpyDeviceToHost,
-      //                               stream));
-      // RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
-      // std::cout << "Batch " << i << " adj_graph:" << std::endl;
-      // std::for_each(host_adjg.begin(), host_adjg.end(), [=](Index_ x) { std::cout << x << " "; });
-      // std::cout << std::endl;
+    if (bHost_adjg && bAll) {
+      std::vector<Index_> host_adjg(maxadjlen, 0);
+      RAFT_CUDA_TRY(cudaMemcpyAsync(host_adjg.data(),
+                                    adj_graph.data(),
+                                    host_adjg.size() * sizeof(Index_),
+                                    cudaMemcpyDeviceToHost,
+                                    stream));
+      RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
+      std::cout << "Batch " << i << " adj_graph:" << std::endl;
+      std::for_each(host_adjg.begin(), host_adjg.end(), [=](Index_ x) { std::cout << x << " "; });
+      std::cout << std::endl;
     }
 
     CUML_LOG_DEBUG("--> Computing connected components");
@@ -320,17 +400,17 @@ std::size_t run(const raft::handle_t& handle,
       });
     raft::common::nvtx::pop_range();
 
-    {
-      // std::vector<Index_> host_label(N, 0);
-      // RAFT_CUDA_TRY(cudaMemcpyAsync(host_label.data(),
-      //                               (i == 0) ? labels : labels_temp,
-      //                               host_label.size() * sizeof(Index_),
-      //                               cudaMemcpyDeviceToHost,
-      //                               stream));
-      // RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
-      // std::cout << "Batch " << i << " labels:" << std::endl;
-      // std::for_each(host_label.begin(), host_label.end(), [=](Index_ x) { std::cout << x << " "; });
-      // std::cout << std::endl;
+    if (bHost_label && bAll) {
+      std::vector<Index_> host_label(N, 0);
+      RAFT_CUDA_TRY(cudaMemcpyAsync(host_label.data(),
+                                    (i == 0) ? labels : labels_temp,
+                                    host_label.size() * sizeof(Index_),
+                                    cudaMemcpyDeviceToHost,
+                                    stream));
+      RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
+      std::cout << "Batch " << i << " labels:" << std::endl;
+      std::for_each(host_label.begin(), host_label.end(), [=](Index_ x) { std::cout << x << " "; });
+      std::cout << std::endl;
     }
 
     if (i > 0) {
@@ -348,17 +428,17 @@ std::size_t run(const raft::handle_t& handle,
     // std::cout << std::endl;
   }
 
-  {
-    // std::vector<Index_> host_label(N, 0);
-    // RAFT_CUDA_TRY(cudaMemcpyAsync(host_label.data(),
-    //                               labels,
-    //                               host_label.size() * sizeof(Index_),
-    //                               cudaMemcpyDeviceToHost,
-    //                               stream));
-    // RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
-    // std::cout << "Labels:" << std::endl;
-    // std::for_each(host_label.begin(), host_label.end(), [=](Index_ x) { std::cout << x << " "; });
-    // std::cout << std::endl;
+  if (bHost_label && bAll) {
+    std::vector<Index_> host_label(N, 0);
+    RAFT_CUDA_TRY(cudaMemcpyAsync(host_label.data(),
+                                  labels,
+                                  host_label.size() * sizeof(Index_),
+                                  cudaMemcpyDeviceToHost,
+                                  stream));
+    RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
+    std::cout << "Labels:" << std::endl;
+    std::for_each(host_label.begin(), host_label.end(), [=](Index_ x) { std::cout << x << " "; });
+    std::cout << std::endl;
   }
 
   // Combine the results in the multi-node multi-GPU case
@@ -430,10 +510,12 @@ std::size_t run(const raft::handle_t& handle,
   const std::size_t align = 256;
   bool divided            = batch_size < static_cast<size_t>(n_total_rows);
   // divided                 = true;
+  ML::Dbscan::LookupTable<Index_> lookup_obj(n_groups, n_total_rows);
 
   /**
    * Use one big, disconnected graph here
    */
+  std::size_t lookup_size = lookup_obj.m_size;
   std::size_t adj_size =
     divided ? raft::alignTo<std::size_t>(sizeof(bool) * n_total_rows * batch_size, align)
             : raft::alignTo<std::size_t>(sizeof(bool) * n_total_rows * n_total_rows, align);
@@ -441,7 +523,7 @@ std::size_t run(const raft::handle_t& handle,
   std::size_t m_size        = raft::alignTo<std::size_t>(sizeof(bool), align);
   std::size_t vd_size =
     divided ? raft::alignTo<std::size_t>(sizeof(Index_) * (batch_size + 1), align)
-            : raft::alignTo<std::size_t>(sizeof(Index_) * (n_groups + n_total_rows), align);
+            : raft::alignTo<std::size_t>(sizeof(Index_) * (n_groups + n_total_rows + 1), align);
   std::size_t ex_scan_size = divided
                                ? raft::alignTo<std::size_t>(sizeof(Index_) * batch_size, align)
                                : raft::alignTo<std::size_t>(sizeof(Index_) * n_total_rows, align);
@@ -457,48 +539,60 @@ std::size_t run(const raft::handle_t& handle,
          (unsigned long)(divided ? batch_size : n_total_rows));
 
   if (workspace == NULL) {
-    auto size = adj_size + core_pts_size + m_size + vd_size + ex_scan_size + 3 * labels_size;
+    auto size = lookup_size + adj_size + core_pts_size + m_size + vd_size + ex_scan_size +
+                ((divided) ? 3 : 1) * labels_size;
     return size;
   }
 
   // partition the temporary workspace needed for different stages of dbscan.
 
-  Index_ maxadjlen  = 0;
-  Index_ curradjlen = 0;
-  char* temp        = (char*)workspace;
-  bool* adj         = (bool*)temp;
+  Index_ maxadjlen         = 0;
+  Index_ curradjlen        = 0;
+  char* temp               = (char*)workspace;
+  Index_* lookup_workspace = (Index_*)temp;
+  temp += lookup_size;
+  bool* adj = (bool*)temp;
   temp += adj_size;
+  Index_* vd = (Index_*)temp;
+  temp += vd_size;
   bool* core_pts = (bool*)temp;
   temp += core_pts_size;
   bool* m = (bool*)temp;
   temp += m_size;
-  Index_* vd = (Index_*)temp;
-  temp += vd_size;
   Index_* ex_scan = (Index_*)temp;
   temp += ex_scan_size;
-  Index_* labels_temp = (Index_*)temp;
-  temp += labels_size;
-  Index_* labels_group = (Index_*)temp;
-  temp += labels_size;
+
+  Index_* labels_temp = (divided) ? (Index_*)temp : nullptr;
+  temp += (divided) ? labels_size : 0;
+  Index_* labels_group = (divided) ? (Index_*)temp : nullptr;
+  temp += (divided) ? labels_size : 0;
+
   Index_* work_buffer = (Index_*)temp;
   temp += labels_size;
 
   Index_ N = n_total_rows;
   Index_ D = n_cols;
 
-  {
-    // std::cout << "n_rows = ";
-    // for(int b = 0; b < n_groups; ++b) { std::cout << ptr_n_rows[b] << " "; }
-    // std::cout << std::endl;
-    // std::vector<Type_f> host_x(n_total_rows * n_cols, 0);
-    // RAFT_CUDA_TRY(cudaMemcpyAsync(
-    //   host_x.data(), x, host_x.size() * sizeof(Type_f), cudaMemcpyDeviceToHost, stream));
-    // RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
-    // std::cout << "Input:" << std::endl;
-    // std::for_each(host_x.begin(), host_x.end(), [=](double x) { std::cout << x << " "; });
-    // std::cout << std::endl;
-  }
+  lookup_obj.init(handle, ptr_n_rows, lookup_workspace, stream);
 
+#if PRINT_TEMPVAL
+  if (bHost_x) {
+    std::cout << "n_rows = ";
+    for (int b = 0; b < n_groups; ++b) {
+      std::cout << ptr_n_rows[b] << " ";
+    }
+    std::cout << std::endl;
+    std::vector<Type_f> host_x(n_total_rows * n_cols, 0);
+    RAFT_CUDA_TRY(cudaMemcpyAsync(
+      host_x.data(), x, host_x.size() * sizeof(Type_f), cudaMemcpyDeviceToHost, stream));
+    RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
+    std::cout << "Input:" << std::endl;
+    std::for_each(host_x.begin(), host_x.end(), [=](double x) { std::cout << x << " "; });
+    std::cout << std::endl;
+  }
+#endif
+
+  CUML_LOG_INFO("Apply divided version? %d", (int)divided);
   if (divided) {
     Index_ start_row = 0;
     for (int b = 0; b < n_groups; ++b) {
@@ -522,6 +616,8 @@ std::size_t run(const raft::handle_t& handle,
         VertexDeg::run_batched<Type_f, Index_>(handle,
                                                adj,
                                                vd,
+                                               nullptr,
+                                               nullptr,
                                                x,
                                                eps,
                                                N,
@@ -529,21 +625,19 @@ std::size_t run(const raft::handle_t& handle,
                                                algo_vd,
                                                start_vertex_id,
                                                n_points,
-                                               low_bound,
-                                               high_bound,
                                                stream);
         // VertexDeg::run<Type_f, Index_>(
         //   handle, adj, vd, x, eps, N, D, algo_vd, start_vertex_id, n_points, stream);
         raft::common::nvtx::pop_range();
 
-        {
-          // std::vector<Index_> host_vd(n_points + 1, 0);
-          // RAFT_CUDA_TRY(cudaMemcpyAsync(
-          //   host_vd.data(), vd, host_vd.size() * sizeof(Index_), cudaMemcpyDeviceToHost, stream));
-          // RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
-          // std::cout << "Group " << b << " batch " << i << " vd:" << std::endl;
-          // std::for_each(host_vd.begin(), host_vd.end(), [=](Index_ x) { std::cout << x << " "; });
-          // std::cout << std::endl;
+        if (bHost_vd && bAll) {
+          std::vector<Index_> host_vd(n_points + 1, 0);
+          RAFT_CUDA_TRY(cudaMemcpyAsync(
+            host_vd.data(), vd, host_vd.size() * sizeof(Index_), cudaMemcpyDeviceToHost, stream));
+          RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
+          std::cout << "Group " << b << " batch " << i << " vd:" << std::endl;
+          std::for_each(host_vd.begin(), host_vd.end(), [=](Index_ x) { std::cout << x << " "; });
+          std::cout << std::endl;
         }
 
         CUML_LOG_DEBUG("--> Computing core point mask");
@@ -553,17 +647,17 @@ std::size_t run(const raft::handle_t& handle,
         raft::common::nvtx::pop_range();
       }
 
-      {
-        // int size = n_total_rows;
-        // bool host_corepts[size];
-        // RAFT_CUDA_TRY(cudaMemcpyAsync(
-        //   host_corepts, core_pts, size * sizeof(bool), cudaMemcpyDeviceToHost, stream));
-        // RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
-        // std::cout << "core_pts:" << std::endl;
-        // for (int i = 0; i < size; ++i) {
-        //   std::cout << host_corepts[i] << " ";
-        // };
-        // std::cout << std::endl;
+      if (bHost_cpt && bAll) {
+        int size = n_total_rows;
+        bool host_corepts[size];
+        RAFT_CUDA_TRY(cudaMemcpyAsync(
+          host_corepts, core_pts, size * sizeof(bool), cudaMemcpyDeviceToHost, stream));
+        RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
+        std::cout << "core_pts:" << std::endl;
+        for (int i = 0; i < size; ++i) {
+          std::cout << host_corepts[i] << " ";
+        };
+        std::cout << std::endl;
       }
       start_row += n_rows_per_group;
     }
@@ -598,6 +692,8 @@ std::size_t run(const raft::handle_t& handle,
           VertexDeg::run_batched<Type_f, Index_>(handle,
                                                  adj,
                                                  vd,
+                                                 nullptr,
+                                                 nullptr,
                                                  x,
                                                  eps,
                                                  N,
@@ -605,8 +701,6 @@ std::size_t run(const raft::handle_t& handle,
                                                  algo_vd,
                                                  start_vertex_id,
                                                  n_points,
-                                                 low_bound,
-                                                 high_bound,
                                                  stream);
           // VertexDeg::run<Type_f, Index_>(
           //   handle, adj, vd, x, eps, N, D, algo_vd, start_vertex_id, n_points, stream);
@@ -615,24 +709,22 @@ std::size_t run(const raft::handle_t& handle,
         raft::update_host(&curradjlen, vd + n_points, 1, stream);
         handle.sync_stream(stream);
 
-        {
-          // bool host_adj[N * batch_size];
-          // RAFT_CUDA_TRY(cudaMemcpyAsync(
-          //   host_adj, adj, N * batch_size * sizeof(bool), cudaMemcpyDeviceToHost, stream));
-          // RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
-          // std::cout << "Adj:" << std::endl;
-          // for (size_t r = 0; r < batch_size; ++r) {
-          //   for (int c = 0; c < N; ++c) {
-          //     std::cout << host_adj[r * N + c] << " ";
-          //   }
-          //   std::cout << std::endl;
-          // }
-          // std::cout << std::endl;
+        if (bHost_adj && bAll) {
+          bool host_adj[N * batch_size];
+          RAFT_CUDA_TRY(cudaMemcpyAsync(
+            host_adj, adj, N * batch_size * sizeof(bool), cudaMemcpyDeviceToHost, stream));
+          RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
+          std::cout << "Adj:" << std::endl;
+          for (size_t r = 0; r < batch_size; ++r) {
+            for (int c = 0; c < N; ++c) {
+              std::cout << host_adj[r * N + c] << " ";
+            }
+            std::cout << std::endl;
+          }
+          std::cout << std::endl;
         }
 
-        {
-          // std::cout << "curradjlen(" << i << ") " << curradjlen << " ";
-        }
+        if (bHost_adjl && bAll) { std::cout << "curradjlen(" << i << ") " << curradjlen << " "; }
 
         CUML_LOG_DEBUG("--> Computing adjacency graph with %ld nnz.", (unsigned long)curradjlen);
         raft::common::nvtx::push_range("Trace::Dbscan::AdjGraph");
@@ -644,43 +736,43 @@ std::size_t run(const raft::handle_t& handle,
           handle, adj, vd, adj_graph.data(), curradjlen, ex_scan, N, algo_adj, n_points, stream);
         raft::common::nvtx::pop_range();
 
-        {
-          // std::vector<Index_> host_exs(n_points, 0);
-          // RAFT_CUDA_TRY(cudaMemcpyAsync(host_exs.data(),
-          //                               ex_scan,
-          //                               host_exs.size() * sizeof(Index_),
-          //                               cudaMemcpyDeviceToHost,
-          //                               stream));
-          // RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
-          // std::cout << "Group " << b << " batch " << i << " ex_scan:" << std::endl;
-          // std::for_each(host_exs.begin(), host_exs.end(), [=](Index_ x) { std::cout << x << " "; });
-          // std::cout << std::endl;
+        if (bHost_ex && bAll) {
+          std::vector<Index_> host_exs(n_points, 0);
+          RAFT_CUDA_TRY(cudaMemcpyAsync(host_exs.data(),
+                                        ex_scan,
+                                        host_exs.size() * sizeof(Index_),
+                                        cudaMemcpyDeviceToHost,
+                                        stream));
+          RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
+          std::cout << "Group " << b << " batch " << i << " ex_scan:" << std::endl;
+          std::for_each(host_exs.begin(), host_exs.end(), [=](Index_ x) { std::cout << x << " "; });
+          std::cout << std::endl;
         }
 
-        {
-          // std::vector<Index_> host_adjg(maxadjlen, 0);
-          // RAFT_CUDA_TRY(cudaMemcpyAsync(host_adjg.data(),
-          //                               adj_graph.data(),
-          //                               host_adjg.size() * sizeof(Index_),
-          //                               cudaMemcpyDeviceToHost,
-          //                               stream));
-          // RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
-          // std::cout << "Group " << b << " batch " << i << " adj_graph:" << std::endl;
-          // std::for_each(
-          //   host_adjg.begin(), host_adjg.end(), [=](Index_ x) { std::cout << x << " "; });
-          // std::cout << std::endl;
+        if (bHost_adjg && bAll) {
+          std::vector<Index_> host_adjg(maxadjlen, 0);
+          RAFT_CUDA_TRY(cudaMemcpyAsync(host_adjg.data(),
+                                        adj_graph.data(),
+                                        host_adjg.size() * sizeof(Index_),
+                                        cudaMemcpyDeviceToHost,
+                                        stream));
+          RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
+          std::cout << "Group " << b << " batch " << i << " adj_graph:" << std::endl;
+          std::for_each(
+            host_adjg.begin(), host_adjg.end(), [=](Index_ x) { std::cout << x << " "; });
+          std::cout << std::endl;
         }
 
-        {
-          // bool host_corepts[n_total_rows];
-          // RAFT_CUDA_TRY(cudaMemcpyAsync(
-          //   host_corepts, core_pts, n_total_rows * sizeof(bool), cudaMemcpyDeviceToHost, stream));
-          // RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
-          // std::cout << "core_pts before labelling:" << std::endl;
-          // for (auto it : host_corepts) {
-          //   std::cout << it << " ";
-          // };
-          // std::cout << std::endl;
+        if (bHost_cpt && bAll) {
+          bool host_corepts[n_total_rows];
+          RAFT_CUDA_TRY(cudaMemcpyAsync(
+            host_corepts, core_pts, n_total_rows * sizeof(bool), cudaMemcpyDeviceToHost, stream));
+          RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
+          std::cout << "core_pts before labelling:" << std::endl;
+          for (auto it : host_corepts) {
+            std::cout << it << " ";
+          };
+          std::cout << std::endl;
         }
 
         CUML_LOG_DEBUG("--> Computing connected components");
@@ -700,20 +792,20 @@ std::size_t run(const raft::handle_t& handle,
           });
         raft::common::nvtx::pop_range();
 
-        {
-          // Index_* d_label = (i == 0) ? (b == 0 ? labels : labels_group) : labels_temp;
-          // std::vector<Index_> host_label(N, 0);
-          // RAFT_CUDA_TRY(cudaMemcpyAsync(host_label.data(),
-          //                               d_label,
-          //                               host_label.size() * sizeof(Index_),
-          //                               cudaMemcpyDeviceToHost,
-          //                               stream));
-          // RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
-          // std::cout << "Group " << b << " batch " << i << " ptr = " << d_label
-          //           << " label:" << std::endl;
-          // std::for_each(
-          //   host_label.begin(), host_label.end(), [=](Index_ x) { std::cout << x << " "; });
-          // std::cout << std::endl;
+        if (bHost_label && bAll) {
+          Index_* d_label = (i == 0) ? (b == 0 ? labels : labels_group) : labels_temp;
+          std::vector<Index_> host_label(N, 0);
+          RAFT_CUDA_TRY(cudaMemcpyAsync(host_label.data(),
+                                        d_label,
+                                        host_label.size() * sizeof(Index_),
+                                        cudaMemcpyDeviceToHost,
+                                        stream));
+          RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
+          std::cout << "Group " << b << " batch " << i << " ptr = " << d_label
+                    << " label:" << std::endl;
+          std::for_each(
+            host_label.begin(), host_label.end(), [=](Index_ x) { std::cout << x << " "; });
+          std::cout << std::endl;
         }
 
         if (i > 0) {
@@ -736,34 +828,25 @@ std::size_t run(const raft::handle_t& handle,
           raft::common::nvtx::pop_range();
         }
 
-        {
-          // Index_* d_label = b == 0 ? labels : labels_group;
-          // std::vector<Index_> host_label(N, 0);
-          // RAFT_CUDA_TRY(cudaMemcpyAsync(host_label.data(),
-          //                               d_label,
-          //                               host_label.size() * sizeof(Index_),
-          //                               cudaMemcpyDeviceToHost,
-          //                               stream));
-          // RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
-          // std::cout << "Group " << b << " batch " << i << " ptr = " << d_label
-          //           << " label:" << std::endl;
-          // std::for_each(
-          //   host_label.begin(), host_label.end(), [=](Index_ x) { std::cout << x << " "; });
-          // std::cout << std::endl;
+        if (bHost_label && bAll) {
+          Index_* d_label = b == 0 ? labels : labels_group;
+          std::vector<Index_> host_label(N, 0);
+          RAFT_CUDA_TRY(cudaMemcpyAsync(host_label.data(),
+                                        d_label,
+                                        host_label.size() * sizeof(Index_),
+                                        cudaMemcpyDeviceToHost,
+                                        stream));
+          RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
+          std::cout << "Group " << b << " batch " << i << " ptr = " << d_label
+                    << " label:" << std::endl;
+          std::for_each(
+            host_label.begin(), host_label.end(), [=](Index_ x) { std::cout << x << " "; });
+          std::cout << std::endl;
         }
-
-        // if (b > 0) {
-        //   CUML_LOG_DEBUG("--> Accumulating labels");
-        //   raft::common::nvtx::push_range("Trace::Dbscan::MergeLabels");
-        //   MergeLabels::run<Index_>(handle, labels, labels_group, core_pts, work_buffer, m, N,
-        //   stream); raft::common::nvtx::pop_range();
-        // }
-        // CUML_LOG_INFO("Done");
       }
 
       if (b > 0) {
         raft::sparse::WeakCCState state(m);
-        // CUML_LOG_INFO("--> Batch accumulating labels");
         raft::common::nvtx::push_range("Trace::Dbscan::MergeLabels");
         MergeLabels::run<Index_>(handle, labels, labels_group, core_pts, work_buffer, m, N, stream);
         raft::common::nvtx::pop_range();
@@ -772,103 +855,119 @@ std::size_t run(const raft::handle_t& handle,
       start_row += n_rows_per_group;
     }
   } else {
-    Index_ start_vertex_id = 0;
+    Index_ adj_stride      = N;
+    RAFT_CUDA_TRY(cudaMemsetAsync(adj, 0, adj_size + vd_size, stream));
     for (int i = 0; i < n_groups; ++i) {
-      Index_ n_points   = ptr_n_rows[i];
-      Index_ low_bound  = start_vertex_id;
-      Index_ high_bound = start_vertex_id + n_points;
+      Index_ start_vertex_id = 0;
+      Index_ start_row = lookup_obj.host_row_starts[i];
+      Index_ n_points  = lookup_obj.host_row_steps[i];
+      // Index_ n_points   = ptr_n_rows[i];
 
       CUML_LOG_DEBUG(
         "- Batch %d / %ld (%ld samples)", i + 1, (unsigned long)n_groups, (unsigned long)n_points);
 
       CUML_LOG_DEBUG("--> Computing vertex degrees");
-      Index_* vd_base = vd + start_vertex_id + i;
-      bool* adj_base  = adj + start_vertex_id * N;
+      Index_* vd_base      = vd + start_row;
+      Index_* vd_all       = vd + n_total_rows;
+      Index_* vd_batch     = vd + n_total_rows + 1 + i;
+      bool* adj_base       = adj + start_row * adj_stride;
+      const Type_f* x_base = x + start_row * D;
       raft::common::nvtx::push_range("Trace::Dbscan::VertexDeg");
       VertexDeg::run_batched<Type_f, Index_>(handle,
                                              adj_base,
                                              vd_base,
-                                             x,
+                                             vd_batch,
+                                             vd_all,
+                                             x_base,
                                              eps,
                                              N,
                                              D,
                                              algo_vd,
                                              start_vertex_id,
                                              n_points,
-                                             low_bound,
-                                             high_bound,
-                                             stream);
+                                             stream,
+                                             i,
+                                             adj_stride,
+                                             &lookup_obj);
       raft::common::nvtx::pop_range();
 
-      CUML_LOG_DEBUG("--> Computing core point mask");
-      raft::common::nvtx::push_range("Trace::Dbscan::CorePoints");
-      CorePoints::compute<Index_>(
-        handle, vd_base, core_pts, min_pts, start_vertex_id, n_points, stream);
-      raft::common::nvtx::pop_range();
-
-      {
-        // std::vector<Index_> host_vd(n_points + 1, 0);
-        // RAFT_CUDA_TRY(cudaMemcpyAsync(host_vd.data(),
-        //                               vd_base,
-        //                               host_vd.size() * sizeof(Index_),
-        //                               cudaMemcpyDeviceToHost,
-        //                               stream));
-        // RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
-        // std::cout << "Batch " << i << " vd:" << std::endl;
-        // std::for_each(host_vd.begin(), host_vd.end(), [=](Index_ x) { std::cout << x << " "; });
-        // std::cout << std::endl;
+#if PRINT_TEMPVAL
+      if (bHost_vd) {
+        std::vector<Index_> host_vd(n_points, 0);
+        RAFT_CUDA_TRY(cudaMemcpyAsync(host_vd.data(),
+                                      vd_base,
+                                      host_vd.size() * sizeof(Index_),
+                                      cudaMemcpyDeviceToHost,
+                                      stream));
+        RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
+        std::cout << "Batch " << i << " vd:" << std::endl;
+        std::for_each(host_vd.begin(), host_vd.end(), [=](Index_ x) { std::cout << x << " "; });
+        std::cout << std::endl;
       }
+#endif
 
-      {
-        // int size = n_total_rows;
-        // bool host_corepts[size];
-        // RAFT_CUDA_TRY(cudaMemcpyAsync(
-        //   host_corepts, core_pts, size * sizeof(bool), cudaMemcpyDeviceToHost, stream));
-        // RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
-        // std::cout << "core_pts:" << std::endl;
-        // for (int i = 0; i < size; ++i) {
-        //   std::cout << host_corepts[i] << " ";
-        // };
-        // std::cout << std::endl;
-      }
-      start_vertex_id += ptr_n_rows[i];
+      start_vertex_id += n_points;
     }
 
-    {
-      // bool host_adj[N * batch_size];
-      // RAFT_CUDA_TRY(cudaMemcpyAsync(
-      //   host_adj, adj, N * batch_size * sizeof(bool), cudaMemcpyDeviceToHost, stream));
-      // RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
-      // std::cout << "Adj:" << std::endl;
-      // for (size_t r = 0; r < batch_size; ++r) {
-      //   for (int c = 0; c < N; ++c) {
-      //     std::cout << host_adj[r * N + c] << " ";
-      //   }
-      //   std::cout << std::endl;
-      // }
-      // std::cout << std::endl;
+#if PRINT_TEMPVAL
+    if (bHost_vd) {
+      std::vector<Index_> host_vd(n_groups + n_total_rows + 1, 0);
+      RAFT_CUDA_TRY(cudaMemcpyAsync(
+        host_vd.data(), vd, host_vd.size() * sizeof(Index_), cudaMemcpyDeviceToHost, stream));
+      RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
+      std::cout << "All vd:" << std::endl;
+      std::for_each(host_vd.begin(), host_vd.end(), [=](Index_ x) { std::cout << x << " "; });
+      std::cout << std::endl;
     }
+#endif
+
+    CUML_LOG_DEBUG("--> Computing core point mask");
+    raft::common::nvtx::push_range("Trace::Dbscan::CorePoints");
+    CorePoints::compute<Index_>(handle, vd, core_pts, min_pts, 0, n_total_rows, stream);
+    raft::common::nvtx::pop_range();
+
+#if PRINT_TEMPVAL
+    if (bHost_cpt) {
+      int size = n_total_rows;
+      bool host_corepts[size];
+      RAFT_CUDA_TRY(cudaMemcpyAsync(
+        host_corepts, core_pts, size * sizeof(bool), cudaMemcpyDeviceToHost, stream));
+      RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
+      std::cout << "core_pts:" << std::endl;
+      for (int i = 0; i < size; ++i) {
+        std::cout << host_corepts[i] << " ";
+      };
+      std::cout << std::endl;
+    }
+#endif
+
+#if PRINT_TEMPVAL
+    if (bHost_adj) {
+      bool host_adj[N * n_total_rows];
+      RAFT_CUDA_TRY(cudaMemcpyAsync(
+        host_adj, adj, N * n_total_rows * sizeof(bool), cudaMemcpyDeviceToHost, stream));
+      RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
+      std::cout << "Adj:" << std::endl;
+      for (Index_ r = 0; r < n_total_rows; ++r) {
+        for (Index_ c = 0; c < N; ++c) {
+          std::cout << host_adj[r * N + c] << " ";
+        }
+        std::cout << std::endl;
+      }
+      std::cout << std::endl;
+    }
+#endif
 
     // Compute the labelling for the owned part of the graph
     raft::sparse::WeakCCState state(m);
     rmm::device_uvector<Index_> adj_graph(0, stream);
 
-    start_vertex_id = 0;
-    for (int i = 0; i < n_groups; ++i) {
-      Index_ n_points = ptr_n_rows[i];
-      if (n_points <= 0) break;
-      Index_* vd_base = vd + start_vertex_id + i;
-      bool* adj_base  = adj + start_vertex_id * N;
-
-      CUML_LOG_DEBUG(
-        "- Batch %d / %ld (%ld samples)", i + 1, (unsigned long)n_groups, (unsigned long)n_points);
-
-      raft::update_host(&curradjlen, (vd_base + n_points), 1, stream);
+    {
+      Index_ n_points = n_total_rows;
+      raft::update_host(&curradjlen, (vd + n_total_rows), 1, stream);
       handle.sync_stream(stream);
 
-      {
-        // std::cout << "curradjlen(" << i << ") " << curradjlen << " ";
-      }
+      if (bHost_adjl && bAll) { std::cout << "curradjlen " << curradjlen << " " << std::endl; }
 
       CUML_LOG_DEBUG("--> Computing adjacency graph with %ld nnz.", (unsigned long)curradjlen);
       raft::common::nvtx::push_range("Trace::Dbscan::AdjGraph");
@@ -877,42 +976,55 @@ std::size_t run(const raft::handle_t& handle,
         adj_graph.resize(maxadjlen, stream);
       }
       AdjGraph::run_batched<Index_>(handle,
-                                    adj_base,
-                                    vd_base,
+                                    adj,
+                                    vd,
                                     adj_graph.data(),
                                     curradjlen,
                                     ex_scan,
                                     N,
                                     algo_adj,
                                     n_points,
-                                    stream);
+                                    stream,
+                                    N,
+                                    &lookup_obj);
       raft::common::nvtx::pop_range();
+      CUML_LOG_DEBUG("AdjGraph done");
 
-      {
-        // std::vector<Index_> host_exs(n_points, 0);
-        // RAFT_CUDA_TRY(cudaMemcpyAsync(host_exs.data(), ex_scan, host_exs.size() * sizeof(Index_),
-        // cudaMemcpyDeviceToHost, stream)); RAFT_CUDA_TRY(cudaStreamSynchronize(stream)); std::cout
-        // << "Batch " << i << " ex_scan:" << std::endl; std::for_each(host_exs.begin(),
-        // host_exs.end(), [=](Index_ x){ std::cout << x << " "; }); std::cout << std::endl;
+#if PRINT_TEMPVAL
+      if (bHost_ex) {
+        std::vector<Index_> host_exs(n_points, 0);
+        RAFT_CUDA_TRY(cudaMemcpyAsync(host_exs.data(),
+                                      ex_scan,
+                                      host_exs.size() * sizeof(Index_),
+                                      cudaMemcpyDeviceToHost,
+                                      stream));
+        RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
+        std::cout << "Ex_scan:" << std::endl;
+        std::for_each(host_exs.begin(), host_exs.end(), [=](Index_ x) { std::cout << x << " "; });
+        std::cout << std::endl;
       }
+#endif
 
-      {
-        // std::vector<Index_> host_adjg(maxadjlen, 0);
-        // RAFT_CUDA_TRY(cudaMemcpyAsync(host_adjg.data(),
-        //                               adj_graph.data(),
-        //                               host_adjg.size() * sizeof(Index_),
-        //                               cudaMemcpyDeviceToHost,
-        //                               stream));
-        // RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
-        // std::cout << "Batch " << i << " adj_graph:" << std::endl;
-        // std::for_each(host_adjg.begin(), host_adjg.end(), [=](Index_ x) { std::cout << x << " "; });
-        // std::cout << std::endl;
+#if PRINT_TEMPVAL
+      if (bHost_adjg) {
+        std::vector<Index_> host_adjg(maxadjlen, 0);
+        RAFT_CUDA_TRY(cudaMemcpyAsync(host_adjg.data(),
+                                      adj_graph.data(),
+                                      host_adjg.size() * sizeof(Index_),
+                                      cudaMemcpyDeviceToHost,
+                                      stream));
+        RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
+        std::cout << "Adj_graph:" << std::endl;
+        std::for_each(host_adjg.begin(), host_adjg.end(), [=](Index_ x) { std::cout << x << " "; });
+        std::cout << std::endl;
       }
+#endif
 
+      Index_ start_vertex_id = 0;
       CUML_LOG_DEBUG("--> Computing connected components");
       raft::common::nvtx::push_range("Trace::Dbscan::WeakCC");
       raft::sparse::weak_cc_batched<Index_>(
-        i == 0 ? labels : labels_temp,
+        labels,
         ex_scan,
         adj_graph.data(),
         curradjlen,
@@ -925,67 +1037,101 @@ std::size_t run(const raft::handle_t& handle,
           return global_id < N ? __ldg((char*)core_pts + global_id) : 0;
         });
       raft::common::nvtx::pop_range();
-
-      {
-        // std::vector<Index_> host_label(n_total_rows, 0);
-        // RAFT_CUDA_TRY(cudaMemcpyAsync(host_label.data(),
-        //                               (i == 0) ? labels : labels_temp,
-        //                               host_label.size() * sizeof(Index_),
-        //                               cudaMemcpyDeviceToHost,
-        //                               stream));
-        // RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
-        // std::cout << "Batch " << i << " labels:" << std::endl;
-        // std::for_each(
-        //   host_label.begin(), host_label.end(), [=](Index_ x) { std::cout << x << " "; });
-        // std::cout << std::endl;
-      }
-
-      if (i > 0) {
-        // The labels_temp array contains the labelling for the neighborhood
-        // graph of the current batch. This needs to be merged with the labelling
-        // created by the previous batches.
-        // Using the labelling from the previous batches as initial value for
-        // weak_cc_batched and skipping the merge step would lead to incorrect
-        // results as described in #3094.
-        CUML_LOG_DEBUG("--> Accumulating labels");
-        raft::common::nvtx::push_range("Trace::Dbscan::MergeLabels");
-        MergeLabels::run<Index_>(handle, labels, labels_temp, core_pts, work_buffer, m, N, stream);
-        raft::common::nvtx::pop_range();
-      }
-
-      start_vertex_id += ptr_n_rows[i];
     }
-    // std::cout << std::endl;
+
+#if PRINT_TEMPVAL
+    if (bHost_label) {
+      std::vector<Index_> host_label(n_total_rows, 0);
+      RAFT_CUDA_TRY(cudaMemcpyAsync(host_label.data(),
+                                    labels,
+                                    host_label.size() * sizeof(Index_),
+                                    cudaMemcpyDeviceToHost,
+                                    stream));
+      RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
+      std::cout << "Labels:" << std::endl;
+      std::for_each(host_label.begin(), host_label.end(), [=](Index_ x) { std::cout << x << " "; });
+      std::cout << std::endl;
+    }
+#endif
   }
 
-  {
-    // std::vector<Index_> host_label(n_total_rows, 0);
-    // RAFT_CUDA_TRY(cudaMemcpyAsync(host_label.data(),
-    //                               labels,
-    //                               host_label.size() * sizeof(Index_),
-    //                               cudaMemcpyDeviceToHost,
-    //                               stream));
-    // RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
-    // std::cout << "Labels:" << std::endl;
-    // std::for_each(host_label.begin(), host_label.end(), [=](Index_ x) { std::cout << x << " "; });
-    // std::cout << std::endl;
+#if PRINT_TEMPVAL
+  if (bHost_label) {
+    std::vector<Index_> host_label(n_total_rows, 0);
+    RAFT_CUDA_TRY(cudaMemcpyAsync(host_label.data(),
+                                  labels,
+                                  host_label.size() * sizeof(Index_),
+                                  cudaMemcpyDeviceToHost,
+                                  stream));
+    RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
+    std::cout << "Labels raw:" << std::endl;
+    std::for_each(host_label.begin(), host_label.end(), [=](Index_ x) { std::cout << x << " "; });
+    std::cout << std::endl;
   }
+#endif
 
   // Final relabel
   {
     raft::common::nvtx::push_range("Trace::Dbscan::FinalRelabel");
     if (algo_ccl == 2) {
-      Index_ start_vertex_id = 0;
-      for (int i = 0; i < n_groups; ++i) {
-        Index_ n_points = ptr_n_rows[i];
-        final_relabel(labels + start_vertex_id, n_points, stream);
-        start_vertex_id += n_points;
-      }
+      // Index_ start_vertex_id = 0;
+      // for (int i = 0; i < n_groups; ++i) {
+      //   Index_ n_points = ptr_n_rows[i];
+      //   final_relabel(labels + start_vertex_id, n_points, stream);
+      //   start_vertex_id += n_points;
+      // }
+      final_relabel(labels, n_total_rows, stream);
     }
-    std::size_t nblks = raft::ceildiv<std::size_t>(N, TPB);
-    relabelForSkl<Index_><<<nblks, TPB, 0, stream>>>(labels, N, MAX_LABEL);
+
+#if PRINT_TEMPVAL
+    // if (bHost_label) {
+    //   std::vector<Index_> host_label(n_total_rows, 0);
+    //   RAFT_CUDA_TRY(cudaMemcpyAsync(host_label.data(),
+    //                                 labels,
+    //                                 host_label.size() * sizeof(Index_),
+    //                                 cudaMemcpyDeviceToHost,
+    //                                 stream));
+    //   RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
+    //   std::cout << "Labels after final_relabel:" << std::endl;
+    //   std::for_each(host_label.begin(), host_label.end(), [=](Index_ x) { std::cout << x << " ";
+    //   }); std::cout << std::endl;
+    // }
+#endif
+
+    size_t TPB_X               = 32;
+    size_t TPB_Y               = 4;
+    const Index_* label_starts = lookup_obj.dev_row_starts;
+    const Index_* label_steps  = lookup_obj.dev_row_steps;
+    const Index_ max_rows      = lookup_obj.max_rows;
+    Index_* label_selects      = work_buffer;
+
+    selectLabelStartsKernel<Index_>
+      <<<1, TPB_X, 0, stream>>>(labels, label_selects, label_starts, n_groups, MAX_LABEL);
+
+    dim3 grid(raft::ceildiv(max_rows, Index_(TPB_X)), raft::ceildiv(n_groups, Index_(TPB_Y)), 1);
+    dim3 blk(TPB_X, TPB_Y, 1);
+    relabelForSklBatchedKernel<Index_><<<grid, blk, 0, stream>>>(
+      labels, label_starts, label_steps, label_selects, N, n_groups, MAX_LABEL);
+
+    //   std::size_t nblks = raft::ceildiv<std::size_t>(N, TPB);
+    // relabelForSkl<Index_><<<nblks, TPB, 0, stream>>>(labels, N, MAX_LABEL);
     RAFT_CUDA_TRY(cudaPeekAtLastError());
     raft::common::nvtx::pop_range();
+
+#if PRINT_TEMPVAL
+    if (bHost_label) {
+      std::vector<Index_> host_label(n_total_rows, 0);
+      RAFT_CUDA_TRY(cudaMemcpyAsync(host_label.data(),
+                                    labels,
+                                    host_label.size() * sizeof(Index_),
+                                    cudaMemcpyDeviceToHost,
+                                    stream));
+      RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
+      std::cout << "Labels after relabelForSkl_relabel:" << std::endl;
+      std::for_each(host_label.begin(), host_label.end(), [=](Index_ x) { std::cout << x << " "; });
+      std::cout << std::endl;
+    }
+#endif
 
     // Calculate the core_indices only if an array was passed in
     if (core_indices != nullptr) {

@@ -64,6 +64,7 @@ size_t compute_batch_size(size_t& estimated_memory,
   // Batch size determined based on available memory
   ASSERT(est_mem_per_row > 0, "Estimated memory per row is 0 for DBSCAN");
   size_t batch_size = (max_mbytes_per_batch * 1000000 - est_mem_fixed) / est_mem_per_row;
+  size_t max_batch_size = batch_size;
 
   // Limit batch size to number of owned rows
   batch_size = std::min((size_t)n_owned_rows, batch_size);
@@ -93,6 +94,7 @@ size_t compute_batch_size(size_t& estimated_memory,
   }
 
   estimated_memory = batch_size * est_mem_per_row + est_mem_fixed;
+  CUML_LOG_INFO("Final batch_size - %ld, max_batch_size is %ld", (long int)batch_size, (long int)max_batch_size);
   return batch_size;
 }
 

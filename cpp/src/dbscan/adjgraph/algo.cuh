@@ -21,6 +21,7 @@
 
 #include "../common.cuh"
 #include "pack.h"
+#include "csr_row_op.cuh"
 
 #include <raft/cuda_utils.cuh>
 #include <raft/sparse/convert/csr.hpp>
@@ -51,6 +52,25 @@ void launcher(const raft::handle_t& handle,
 
   raft::sparse::convert::csr_adj_graph_batched<Index_>(
     data.ex_scan, data.N, data.adjnnz, batch_size, data.adj, data.adj_graph, stream);
+
+  RAFT_CUDA_TRY(cudaPeekAtLastError());
+}
+
+template <typename Index_ = int>
+void launcher_batched(const raft::handle_t& handle,
+                      Pack<Index_> data,
+                      Index_ batch_size,
+                      cudaStream_t stream)
+{
+  // std::cout << "adj launcher_batched" << std::endl;
+  using namespace thrust;
+
+  device_ptr<Index_> dev_vd      = device_pointer_cast(data.vd);
+  device_ptr<Index_> dev_ex_scan = device_pointer_cast(data.ex_scan);
+
+  exclusive_scan(handle.get_thrust_policy(), dev_vd, dev_vd + batch_size, dev_ex_scan);
+
+  ML::Dbscan::AdjGraph::Algo::csr_adj_graph_batched<Index_>(data, stream);
 
   RAFT_CUDA_TRY(cudaPeekAtLastError());
 }
