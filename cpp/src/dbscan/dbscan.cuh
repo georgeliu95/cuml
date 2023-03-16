@@ -207,5 +207,23 @@ void dbscanFitImpl(const raft::handle_t& handle,
                               metric);
 }
 
+template <typename T, typename Index_ = int, bool opg = false>
+void dbscanFitImpl(const raft::handle_t& handle,
+                   T* input,
+                   Index_ n_groups,
+                   Index_* n_rows,
+                   Index_* n_cols,
+                   T* eps,
+                   Index_* min_pts,
+                   raft::distance::DistanceType metric,
+                   Index_* labels,
+                   Index_* core_sample_indices,
+                   size_t max_mbytes_per_batch,
+                   cudaStream_t stream,
+                   int verbosity)
+{
+  return;
+}
+
 }  // namespace Dbscan
 }  // namespace ML

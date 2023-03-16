@@ -186,5 +186,125 @@ void fit(const raft::handle_t& handle,
                                           verbosity);
 }
 
+void fit(const raft::handle_t& handle,
+         float* input,
+         int n_groups,
+         int* n_rows,
+         int* n_cols,
+         float* eps,
+         int* min_pts,
+         raft::distance::DistanceType metric,
+         int* labels,
+         int* core_sample_indices,
+         size_t max_bytes_per_batch,
+         int verbosity,
+         bool opg)
+{
+  ASSERT(!opg, "DBSCAN for multi-groups doesn't support multi-GPU");
+  dbscanFitImpl<float, int, false>(handle,
+                                   input,
+                                   n_groups,
+                                   n_rows,
+                                   n_cols,
+                                   eps,
+                                   min_pts,
+                                   metric,
+                                   labels,
+                                   core_sample_indices,
+                                   max_bytes_per_batch,
+                                   handle.get_stream(),
+                                   verbosity);
+}
+
+void fit(const raft::handle_t& handle,
+         double* input,
+         int n_groups,
+         int* n_rows,
+         int* n_cols,
+         double* eps,
+         int* min_pts,
+         raft::distance::DistanceType metric,
+         int* labels,
+         int* core_sample_indices,
+         size_t max_bytes_per_batch,
+         int verbosity,
+         bool opg)
+{
+  ASSERT(!opg, "DBSCAN for multi-groups doesn't support multi-GPU");
+  dbscanFitImpl<double, int, false>(handle,
+                                    input,
+                                    n_groups,
+                                    n_rows,
+                                    n_cols,
+                                    eps,
+                                    min_pts,
+                                    metric,
+                                    labels,
+                                    core_sample_indices,
+                                    max_bytes_per_batch,
+                                    handle.get_stream(),
+                                    verbosity);
+}
+
+void fit(const raft::handle_t& handle,
+         float* input,
+         int64_t n_groups,
+         int64_t* n_rows,
+         int64_t* n_cols,
+         float* eps,
+         int64_t* min_pts,
+         raft::distance::DistanceType metric,
+         int64_t* labels,
+         int64_t* core_sample_indices,
+         size_t max_bytes_per_batch,
+         int verbosity,
+         bool opg)
+{
+  ASSERT(!opg, "DBSCAN for multi-groups doesn't support multi-GPU");
+  dbscanFitImpl<float, int64_t, false>(handle,
+                                       input,
+                                       n_groups,
+                                       n_rows,
+                                       n_cols,
+                                       eps,
+                                       min_pts,
+                                       metric,
+                                       labels,
+                                       core_sample_indices,
+                                       max_bytes_per_batch,
+                                       handle.get_stream(),
+                                       verbosity);
+}
+
+void fit(const raft::handle_t& handle,
+         double* input,
+         int64_t n_groups,
+         int64_t* n_rows,
+         int64_t* n_cols,
+         double* eps,
+         int64_t* min_pts,
+         raft::distance::DistanceType metric,
+         int64_t* labels,
+         int64_t* core_sample_indices,
+         size_t max_bytes_per_batch,
+         int verbosity,
+         bool opg)
+{
+  ASSERT(!opg, "DBSCAN for multi-groups doesn't support multi-GPU");
+  dbscanFitImpl<double, int64_t, false>(handle,
+                                        input,
+                                        n_groups,
+                                        n_rows,
+                                        n_cols,
+                                        eps,
+                                        min_pts,
+                                        metric,
+                                        labels,
+                                        core_sample_indices,
+                                        max_bytes_per_batch,
+                                        handle.get_stream(),
+                                        verbosity);
+}
+
 }  // namespace Dbscan
 }  // namespace ML
