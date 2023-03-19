@@ -327,5 +327,52 @@ std::size_t run(const raft::handle_t& handle,
   CUML_LOG_DEBUG("Done.");
   return (std::size_t)0;
 }
+
+/**
+ * Run the DBSCAN algorithm (common code for multi-groups on single-GPU)
+ * @tparam opg Whether we are running in a multi-node multi-GPU context (disabled for now)
+ * @param[in]  handle       raft handle
+ * @param[in]  x            Input data (N*D row-major device array)
+ * @param[in]  N            Number of the concatenated and padding points
+ * @param[in]  D            Dimensionality of the concatenated and padding points
+ * @param[in]  n_groups     Number of individual groups
+ * @param[in]  n_rows       Numbers of samples
+ * @param[in]  n_cols       Number of features
+ * @param[in]  eps          Epsilon neighborhood criterion (device array of length n_groups)
+ * @param[in]  min_pts      Core points criterion (device array of length n_groups)
+ * @param[out] labels       Output labels (device array of length N)
+ * @param[out] core_indices If not nullptr, the indices of core points are written in this array
+ * @param[in]  algo_vd      Algorithm used for the vertex degrees
+ * @param[in]  algo_adj     Algorithm used for the adjacency graph
+ * @param[in]  algo_ccl     Algorithm used for the final relabel
+ * @param[in]  workspace    Temporary global memory buffer used to store intermediate computations
+ *                          If nullptr, then this function will return the workspace size needed.
+ *                          It is the responsibility of the user to allocate and free this buffer!
+ * @param[in]  stream       The CUDA stream where to launch the kernels
+ * @return In case the workspace pointer is null, this returns the size needed.
+ */
+template <typename Type_f, typename Index_ = int, bool opg = false>
+std::size_t run(const raft::handle_t& handle,
+                const Type_f* x,
+                Index_ N,
+                Index_ D,
+                Index_* n_groups,
+                Index_* n_rows,
+                Index_ n_cols,
+                Type_f* eps,
+                Index_* min_pts,
+                Index_* labels,
+                Index_* core_indices,
+                int algo_vd,
+                int algo_adj,
+                int algo_ccl,
+                void* workspace,
+                cudaStream_t stream,
+                raft::distance::DistanceType metric)
+{
+  CUML_LOG_DEBUG("Done.");
+  return (std::size_t)0;
+}
+
 }  // namespace Dbscan
 }  // namespace ML

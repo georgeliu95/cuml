@@ -73,7 +73,7 @@ cumlError_t cumlDpDbscanFit(cumlHandle_t handle,
  * @param[in] input row-major and concatenated input feature matrixes from different groups
  * @param[in] n_groups number of groups of input feature matrixes
  * @param[in] n_rows numbers of samples in the grouped input feature matrixes
- * @param[in] n_cols numbers of features in the grouped input feature matrixes
+ * @param[in] n_cols number of features in the grouped input feature matrixes
  * @param[in] eps the epsilon values to use for epsilon-neighborhood determination
  * @param[in] min_pts minimum numbers of points to determine a cluster for each group
  * @param[out] labels (size sum(n_rows)) output labels array
@@ -93,7 +93,7 @@ cumlError_t cumlMultiSpDbscanFit(cumlHandle_t handle,
                                  float* input,
                                  int n_groups,
                                  int* n_rows,
-                                 int* n_cols,
+                                 int n_cols,
                                  float* eps,
                                  int* min_pts,
                                  int* labels,
@@ -105,7 +105,7 @@ cumlError_t cumlMultiDpDbscanFit(cumlHandle_t handle,
                                  double* input,
                                  int n_groups,
                                  int* n_rows,
-                                 int* n_cols,
+                                 int n_cols,
                                  double* eps,
                                  int* min_pts,
                                  int* labels,
