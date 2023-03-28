@@ -28,6 +28,9 @@
 #include <raft/util/device_atomics.cuh>
 #include <rmm/device_uvector.hpp>
 
+#include "../multigroups/mg_accessor.cuh"
+#include "../multigroups/mg_epsilon_neighborhood.cuh"
+
 namespace ML {
 namespace Dbscan {
 namespace VertexDeg {
@@ -128,6 +131,86 @@ void launcher(const raft::handle_t& handle,
       return degree;
     });
   RAFT_CUDA_TRY(cudaPeekAtLastError());
+}
+
+/**
+ * Calculates the vertex degree array and the epsilon neighborhood adjacency matrix for the batch.
+ */
+template <typename value_t, typename index_t = int>
+void launcher(const raft::handle_t& handle,
+              Metadata::AdjGraphAccessor<bool, index_t>& adj,
+              Metadata::VertexDegAccessor<index_t, index_t>& vd,
+              const Metadata::PointAccessor<value_t, index_t>& x,
+              value_t* eps,
+              cudaStream_t stream,
+              raft::distance::DistanceType metric)
+{
+  ASSERT(sizeof(index_t) == 4 || sizeof(index_t) == 8, "index_t should be 4 or 8 bytes");
+
+  const index_t nGroups = x.nGroups;
+  index_t m = x.nRowsSum;
+  index_t k = x.stride;
+
+  thrust::device_ptr<value_t> dev_eps = thrust::device_pointer_cast(eps);
+
+  // Compute adjacency matrix `adj` using Cosine or L2 metric.
+  if(metric == raft::distance::DistanceType::CosineExpanded) {
+    thrust::for_each(handle.get_thrust_policy(), dev_eps, dev_eps + nGroups, Metadata::multiply_scalar<value_t>(2));
+    rmm::device_uvector<value_t> rowNorms(m, stream);
+
+    raft::linalg::rowNorm(rowNorms.data(),
+                          x.readonly_data,
+                          k,
+                          m,
+                          raft::linalg::NormType::L2Norm,
+                          true,
+                          stream,
+                          [] __device__(value_t in) { return sqrtf(in); });
+
+    /* Cast away constness because the output matrix for normalization cannot be of const type.
+     * Input matrix will be modified due to normalization.
+     */
+    raft::linalg::matrixVectorOp(
+      const_cast<value_t*>(x.readonly_data),
+      x.readonly_data,
+      rowNorms.data(),
+      k,
+      m,
+      true,
+      true,
+      [] __device__(value_t mat_in, value_t vec_in) { return mat_in / vec_in; },
+      stream);
+
+    // raft::neighbors::epsilon_neighborhood::epsUnexpL2SqNeighborhood<value_t, index_t>(
+    //   data.adj, nullptr, data.x + start_vertex_id * k, data.x, n, m, k, eps2, stream);
+    ML::Dbscan::VertexDeg::Algo::MultiGroupEpsUnexpL2SqNeighborhood<value_t, index_t>(
+      adj, vd, x, eps, stream);
+
+    /**
+     * Restoring the input matrix after normalization.
+     */
+    raft::linalg::matrixVectorOp(
+      const_cast<value_t*>(x.readonly_data),
+      x.readonly_data,
+      rowNorms.data(),
+      k,
+      m,
+      true,
+      true,
+      [] __device__(value_t mat_in, value_t vec_in) { return mat_in * vec_in; },
+      stream);
+  } else {
+    thrust::for_each(handle.get_thrust_policy(), dev_eps, dev_eps + nGroups, Metadata::sq<value_t>());
+
+    // 1. The output matrix adj is now an n x m matrix (row-major order)
+    // 2. Do not compute the vertex degree in epsUnexpL2SqNeighborhood (pass a
+    // nullptr)
+    // raft::neighbors::epsilon_neighborhood::epsUnexpL2SqNeighborhood<value_t, index_t>(
+    //   data.adj, nullptr, data.x + start_vertex_id * k, data.x, n, m, k, eps2, stream);
+    ML::Dbscan::VertexDeg::Algo::MultiGroupEpsUnexpL2SqNeighborhood<value_t, index_t>(
+      adj, vd, x, eps, stream);
+  }
+  ;
 }
 
 }  // namespace Algo
