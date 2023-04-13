@@ -6,51 +6,26 @@
 #include <thrust/host_vector.h>
 #include <thrust/device_vector.h>
 #include <thrust/extrema.h>
+#include <thrust/for_each.h>
 
 #include <raft/util/cuda_utils.cuh>
 #include <raft/util/cudart_utils.hpp>
 #include <raft/core/handle.hpp>
 
-#include <rmm/mr/host/host_memory_resource.hpp>
-
 
 namespace ML {
 namespace Dbscan {
+namespace Multigroups {
 namespace Metadata {
 
-template <typename T>
-struct multiply_scalar
-{
-  multiply_scalar(T _scalar) : scalar(_scalar) {}
-  __host__ __device__
-  T operator()(T value) const
-  {
-    return scalar * value;
-  }
-  T scalar;
-};
-
-template <typename T>
-struct sq
-{
-  __host__ __device__
-  T operator()(T value) const
-  {
-    return value * value;
-  }
-};
-
-template <typename Index_ = int>
-__global__ void initOffsetMask(Index_* mask, Index_* stride, Index_* position, int nGroups) {
-  int groupIdx = blockIdx.x;
-  int rowIdx = threadIdx.x;
-  if(groupIdx >= nGroups)
+template <typename Index_t = int>
+__global__ void init_offset_mask(Index_t* mask, const Index_t* stride, const Index_t* position, Index_t n_groups) {
+  int group_id = blockIdx.x;
+  if(group_id >= n_groups)
     return;
-  Index_* offsetMaskBase = mask + position[groupIdx];
-  while(rowIdx < stride[groupIdx]) {
-    offsetMaskBase[rowIdx] = groupIdx;
-    rowIdx += blockDim.x;
-  }
+  Index_t* selected_mask = mask + position[group_id];
+  for(int i = threadIdx.x; i < stride[group_id]; i += blockDim.x)
+    selected_mask[i] = group_id;
   return;
 }
 
@@ -59,118 +34,108 @@ const std::size_t align = 256;
 template <typename Index_t = int>
 class MultiGroupMetaData {
  public:
-  MultiGroupMetaData(Index_t inNbGroups, const Index_t *inNbRows, Index_t inNbCols)
-    : nGroups(inNbGroups), 
-      nRows(inNbRows),
-      isConstCols(true) {
-    this->nCols = reinterpret_cast<Index_t*>(
-      rmm::mr::host_memory_resource::allocate(nGroups * sizeof(Index_t)));
-    thrust::fill_n(thrust::host, this->nCols, nGroups, inNbCols);
-    
-    this->nRowsMax = *thrust::max_element(thrust::host, inNbRows, inNbRows + inNbGroups);
-    this->nColsMax = inNbCols;
-    this->nRowsSum = thrust::reduce(thrust::host, inNbRows, inNbRows + inNbGroups);
-    this->nColsSum = inNbCols * inNbGroups;
+  MultiGroupMetaData(Index_t _n_groups, Index_t *_n_rows_ptr, Index_t _n_cols)
+  : n_groups(_n_groups), n_rows_ptr(_n_rows_ptr), is_const_cols(true) {
+    n_cols_ptr = reinterpret_cast<Index_t*>(malloc(n_groups * sizeof(Index_t)));
+    thrust::fill_n(thrust::host, n_cols_ptr, n_groups, _n_cols);
+    max_rows = *thrust::max_element(thrust::host, n_rows_ptr, n_rows_ptr + n_groups);
+    max_cols = _n_cols;
+    sum_rows = thrust::reduce(thrust::host, n_rows_ptr, n_rows_ptr + n_groups);
+    sum_cols = _n_cols * n_groups;
   }
 
-  MultiGroupMetaData(Index_t inNbGroups, const Index_t *inNbRows, const Index_t *inNbCols)
-    : nGroups(inNbGroups), 
-      nRows(inNbRows),
-      nCols(inNbCols),
-      isConstCols(false) {
-    this->nRowsMax = *thrust::max_element(thrust::host, inNbRows, inNbRows + inNbGroups);
-    this->nColsMax = *thrust::max_element(thrust::host, inNbCols, inNbCols + inNbGroups);
-    this->nRowsSum = thrust::reduce(thrust::host, inNbRows, inNbRows + inNbGroups);
-    this->nColsSum = thrust::reduce(thrust::host, inNbCols, inNbCols + inNbGroups);
+  MultiGroupMetaData(Index_t _n_groups, Index_t *_n_rows_ptr, Index_t *_n_cols_ptr)
+    : n_groups(_n_groups), n_rows_ptr(_n_rows_ptr), n_cols_ptr(_n_cols_ptr), is_const_cols(false) {
+    max_rows = *thrust::max_element(thrust::host, n_rows_ptr, n_rows_ptr + n_groups);
+    max_cols = *thrust::max_element(thrust::host, n_cols_ptr, n_cols_ptr + n_groups);
+    sum_rows = thrust::reduce(thrust::host, n_rows_ptr, n_rows_ptr + n_groups);
+    sum_cols = thrust::reduce(thrust::host, n_cols_ptr, n_cols_ptr + n_groups);
   }
 
   ~MultiGroupMetaData() {
-    if(this->isConstCols) {
-      rmm::mr::host_memory_resource::deallocate(this->nCols, nGroups * sizeof(Index_t));
+    if(is_const_cols && n_cols_ptr != nullptr) {
+      free(n_cols_ptr);
+      n_cols_ptr = nullptr;
     }
   }
 
-  size_t getWorkspaceSize() {
-    size_t workspaceSize = raft::alignTo<std::size_t>(sizeof(Index_t) * (this->nGroups + 1), align);
-    workspaceSize *= (this->isConstCols)? 2 : 4;
-    return workspaceSize;
+  size_t get_wsp_size() {
+    size_t workspace_size = raft::alignTo<std::size_t>(sizeof(Index_t) * (n_groups + 1), align);
+    workspace_size *= (is_const_cols)? 2 : 4;
+    return workspace_size;
   }
 
-  void initialize(const raft::handle_t& handle, void *workspace, size_t bufferSize, cudaStream_t stream) {
-    this->workspaceSize = this->getWorkspaceSize();
-    ASSERT(bufferSize == this->workspaceSize,
+  void initialize(const raft::handle_t& handle, void *_workspace, size_t buffer_size, cudaStream_t stream) {
+    wsp_size = this->get_wsp_size();
+    ASSERT(buffer_size == wsp_size,
       "The required size of workspace (%ld) doesn't match that passed (%ld) in %s.\n",
-      this->workspaceSize, bufferSize, __FUNCTION__);
-    size_t chunkSize = this->workspaceSize / ((this->isConstCols)? 2 : 4);
-    Index_t *ptrWorkspace = reinterpret_cast<Index_t*>(workspace);
-    this->_workspace = ptrWorkspace;
+      wsp_size, buffer_size, __FUNCTION__);
+    workspace = _workspace;
+    size_t chunk_size = wsp_size / ((is_const_cols)? 2 : 4);
+    char *wsp_ptr = reinterpret_cast<char*>(_workspace);
     this->reset(stream);
 
-    this->devNbRows = ptrWorkspace;
-    ptrWorkspace += chunkSize;
-    this->prefixSumRows = ptrWorkspace;
-    ptrWorkspace += chunkSize;
+    dev_n_rows = reinterpret_cast<Index_t*>(wsp_ptr);
+    wsp_ptr += chunk_size;
+    dev_pfxsum_rows = reinterpret_cast<Index_t*>(wsp_ptr);
+    wsp_ptr += chunk_size;
     RAFT_CUDA_TRY(cudaMemcpyAsync(
-      this->devNbRows, 
-      this->metadata.getPtrNbRows(), 
-      this->metadata.nGroups * sizeof(Index_t), 
-      cudaMemcpyHostToDevice, 
-      stream
-    ));
-    thrust::device_ptr<Index_t> devArray = thrust::device_pointer_cast(this->devNbRows);
-    thrust::device_ptr<Index_t> devPrefixSum = thrust::device_pointer_cast(this->devPrefixSumRows);
-    thrust::exclusive_scan(handle.get_thrust_policy(), devArray, devArray + (this->metadata.nGroups + 1), devPrefixSum);
+      dev_n_rows, n_rows_ptr, n_groups * sizeof(Index_t), cudaMemcpyHostToDevice, stream));
+    thrust::device_ptr<Index_t> thrust_dev_array = thrust::device_pointer_cast(dev_n_rows);
+    thrust::device_ptr<Index_t> thrust_dev_pfxsum = thrust::device_pointer_cast(dev_pfxsum_rows);
+    thrust::exclusive_scan(
+      handle.get_thrust_policy(), thrust_dev_array, thrust_dev_array + (n_groups + 1), thrust_dev_pfxsum);
 
-    if(this->metadata.isConstCols) {
-      this->devNbCols = ptrWorkspace;
-      ptrWorkspace += chunkSize;
-      this->prefixSumCols = ptrWorkspace;
-      thrust::device_ptr<Index_t> devArray = thrust::device_pointer_cast(this->devNbCols);
-      thrust::device_ptr<Index_t> devPrefixSum = thrust::device_pointer_cast(this->devPrefixSumCols);
-      thrust::exclusive_scan(handle.get_thrust_policy(), devArray, devArray + (this->metadata.nGroups + 1), devPrefixSum);
+    if(is_const_cols) {
+      dev_n_cols = reinterpret_cast<Index_t*>(wsp_ptr);
+      wsp_ptr += chunk_size;
+      dev_pfxsum_cols = reinterpret_cast<Index_t*>(wsp_ptr);
+      thrust_dev_array = thrust::device_pointer_cast(dev_n_cols);
+      thrust_dev_pfxsum = thrust::device_pointer_cast(dev_pfxsum_cols);
+      thrust::exclusive_scan(
+        handle.get_thrust_policy(), thrust_dev_array, thrust_dev_array + (n_groups + 1), thrust_dev_pfxsum);
     }
     return;
   }
 
   void destroy() {
-    this->workspaceSize = 0;
-    this->_workspace = nullptr;
-    this->devNbRows = nullptr;
-    this->devNbCols = nullptr;
-    this->devPrefixSumRows = nullptr;
-    this->devPrefixSumCols = nullptr;
+    wsp_size = 0;
+    workspace = nullptr;
+    dev_n_rows = nullptr;
+    dev_n_cols = nullptr;
+    dev_pfxsum_rows = nullptr;
+    dev_pfxsum_cols = nullptr;
     return;
   }
 
-  HDI const Index_t* getHostNbRows() const noexcept { return this->nRows; }
-  HDI const Index_t* getHostNbCols() const noexcept { return this->nCols; }
-  HDI const Index_t* getDevNbRows() const noexcept { return this->devNbRows; }
-  HDI const Index_t* getDevNbCols() const noexcept { return this->devNbCols; }
-  HDI const Index_t* getDevPrefixSumRows() const noexcept { return this->devPrefixSumRows; }
-  HDI const Index_t* getDevPrefixSumCols() const noexcept { return this->devPrefixSumCols; }
+  HDI const Index_t* get_host_rows() const noexcept { return n_rows_ptr; }
+  HDI const Index_t* get_host_cols() const noexcept { return n_cols_ptr; }
+  HDI const Index_t* get_dev_rows() const noexcept { return dev_n_rows; }
+  HDI const Index_t* get_dev_cols() const noexcept { return dev_n_cols; }
+  HDI const Index_t* get_dev_pfxsum_rows() const noexcept { return dev_pfxsum_rows; }
+  HDI const Index_t* get_dev_pfxsum_cols() const noexcept { return dev_pfxsum_cols; }
 
-  const Index_t nGroups;
-  Index_t nRowsMax;
-  Index_t nRowsSum;
-  Index_t nColsMax;
-  Index_t nColsSum;
-  const bool isConstCols;
+  const Index_t n_groups;
+  Index_t max_rows;
+  Index_t sum_rows;
+  Index_t max_cols;
+  Index_t sum_cols;
+  const bool is_const_cols;
  private:
   void reset(cudaStream_t stream) {
-    if(this->_workspace != nullptr) {
-      RAFT_CUDA_TRY(cudaMemsetAsync(this->_workspace, 0, this->workspaceSize, stream));
+    if(workspace != nullptr && wsp_size != 0) {
+      RAFT_CUDA_TRY(cudaMemsetAsync(workspace, 0, wsp_size, stream));
     }
   }
 
-  const Index_t *nRows = nullptr;
-  const Index_t *nCols = nullptr;
-  Index_t *devNbRows = nullptr;
-  Index_t *devNbCols = nullptr;
-  Index_t *devPrefixSumRows = nullptr;
-  Index_t *devPrefixSumCols = nullptr;
-  size_t workspaceSize = 0;
-  Index_t *_workspace = nullptr;
-  
+  Index_t *n_rows_ptr = nullptr;
+  Index_t *n_cols_ptr = nullptr;
+  Index_t *dev_n_rows = nullptr;
+  Index_t *dev_n_cols = nullptr;
+  Index_t *dev_pfxsum_rows = nullptr;
+  Index_t *dev_pfxsum_cols = nullptr;
+  size_t wsp_size = 0;
+  void *workspace = nullptr;
 };
 
 template <typename Data_t,
@@ -178,29 +143,32 @@ template <typename Data_t,
           typename MetaDataClass = MultiGroupMetaData<Index_t>>
 class BaseAccessor {
  public:
-  BaseAccessor(const MetaDataClass& inMetadata, Data_t *inData)
-   : metadata(inMetadata), 
-     nGroups(inMetadata.nGroups), 
-     nRows(inMetadata.getDevNbRows()),
-     startRows(inMetadata.getDevPrefixSumRows()),
-     readonly_data(inData),
-     data(inData) {}
-  BaseAccessor(const MetaDataClass& inMetadata, const Data_t *inData)
-   : metadata(inMetadata), 
-     nGroups(inMetadata.nGroups), 
-     nRows(inMetadata.getDevNbRows()),
-     startRows(inMetadata.getDevPrefixSumRows()),
-     readonly_data(inData) {}
+  BaseAccessor(const MetaDataClass *_metadata, Data_t *_data)
+   : metadata(_metadata), 
+     n_groups(_metadata->n_groups), 
+     n_points(_metadata->sum_rows),
+     n_rows_ptr(_metadata->get_dev_rows()),
+     row_start_ids(_metadata->get_dev_pfxsum_rows()),
+     m_data(_data) {}
+  BaseAccessor(const MetaDataClass *_metadata, const Data_t *_data)
+   : metadata(_metadata), 
+     n_groups(_metadata->n_groups), 
+     n_points(_metadata->sum_rows),
+     n_rows_ptr(_metadata->get_dev_rows()),
+     row_start_ids(_metadata->get_dev_pfxsum_rows()),
+     m_data(_data) {}
 
-  virtual void initialize(const raft::handle_t& handle, void *workspace, size_t bufferSize, cudaStream_t stream) {}
+  virtual void initialize(const raft::handle_t& handle, void *workspace, size_t buffer_size, cudaStream_t stream) {}
   virtual void destroy() {}
+  virtual const Data_t* data() const noexcept { return m_data; }
 
-  const MetaDataClass metadata;
-  const Index_t nGroups;
-  const Index_t *nRows;
-  const Index_t *startRows;
-  Data_t *data = nullptr;
-  const Data_t *readonly_data = nullptr;
+  const MetaDataClass *metadata;
+  const Index_t n_groups;
+  const Index_t n_points;
+  const Index_t *n_rows_ptr;
+  const Index_t *row_start_ids;
+ private:
+  const Data_t *m_data;
 };
 
 template <typename Data_t,
@@ -209,15 +177,15 @@ template <typename Data_t,
           typename BaseClass = BaseAccessor<Data_t, Index_t, MetaDataClass>>
 class PointAccessor : public BaseClass {
  public:
-  PointAccessor(const MetaDataClass& inMetadata, const Data_t *inData) 
-   : BaseClass(inMetadata, inData),
-     nRowsSum(inMetadata.nRowsSum),
-     nRowsMax(inMetadata.nRowsMax),
-     stride(inMetadata.nColsMax) {}
+  PointAccessor(const MetaDataClass *_metadata, const Data_t *_data) 
+   : BaseClass(_metadata, _data),
+     max_rows(_metadata->max_rows),
+     feat_size(_metadata->max_cols),
+     pts(_data) {}
 
-  const Index_t nRowsSum;
-  const Index_t nRowsMax;
-  const Index_t stride;
+  const Index_t max_rows;
+  const Index_t feat_size;
+  const Data_t *pts;
 };
 
 template <typename Data_t,
@@ -226,17 +194,16 @@ template <typename Data_t,
           typename BaseClass = BaseAccessor<Data_t, Index_t, MetaDataClass>>
 class VertexDegAccessor : public BaseClass {
  public:
-  VertexDegAccessor(const MetaDataClass& inMetadata, Data_t *inData) 
-   : BaseClass(inMetadata, inData), nPoints(inMetadata.nRowsSum) {
-    Data_t temp = inData;
+  VertexDegAccessor(const MetaDataClass *_metadata, Data_t *_data) 
+   : BaseClass(_metadata, _data) {
+    Data_t *temp = _data;
     this->vd = temp;
-    temp += inMetadata.nRowsSum;
+    temp += this->n_points;
     this->vd_all = temp;
     temp += 1;
     this->vd_group = temp;
   }
 
-  const Index_t nPoints;
   Data_t *vd;
   Data_t *vd_group;
   Data_t *vd_all;
@@ -248,54 +215,90 @@ template <typename Data_t,
           typename BaseClass = BaseAccessor<Data_t, Index_t, MetaDataClass>>
 class AdjGraphAccessor : public BaseClass {
  public:
-  AdjGraphAccessor(const MetaDataClass& inMetadata, Data_t *inData) : BaseClass(inMetadata, inData),
-    stride(inMetadata.nRowsMax),
-    nRows(inMetadata.getDevNbRows()),
-    startRows(inMetadata.getDevPrefixSumRows()) {}
+  AdjGraphAccessor(const MetaDataClass *_metadata, Data_t *_data)
+   : BaseClass(_metadata, _data),
+    max_nbr(_metadata->max_rows),
+    adj(_data) {}
 
-  size_t getWorkspaceSize() { 
-    return 2 * raft::alignTo<std::size_t>(this->nGroups * sizeof(Index_t));
+  size_t get_wsp_size() { 
+    return 2 * raft::alignTo<std::size_t>(this->n_groups * sizeof(Index_t), align);
   }
 
-  size_t getLayoutSize() {
-    return raft::alignTo<std::size_t>(sizeof(bool) * this->metadata.nRowsSum * this->stride, align);
+  size_t get_layout_size() {
+    size_t sta_layout_size = raft::alignTo<std::size_t>(sizeof(bool) * this->n_points * max_nbr, align);
+    const Index_t *host_n_rows = this->metadata->get_host_rows();
+    size_t dyn_layout_size = thrust::reduce(
+      thrust::host, 
+      host_n_rows, 
+      host_n_rows + this->n_groups, 
+      static_cast<Index_t>(0), 
+      [](const Index_t& lhs, const Index_t& rhs) {
+        return lhs + raft::alignTo<std::size_t>(sizeof(bool) * rhs * rhs, align);
+      }
+    );
+
+    optim_layout = dyn_layout_size < sta_layout_size;
+    return (optim_layout)? dyn_layout_size : sta_layout_size;
   }
 
-  void initialize(const raft::handle_t& handle, void *workspace, size_t bufferSize, cudaStream_t stream) {
-    this->workspaceSize = this->getWorkspaceSize();
-    ASSERT(bufferSize == this->workspaceSize,
+  void initialize(const raft::handle_t& handle, void *workspace, size_t buffer_size, cudaStream_t stream) {
+    wsp_size = this->get_wsp_size();
+    ASSERT(buffer_size == wsp_size,
       "The required size of workspace (%ld) doesn't match that passed (%ld) in %s.\n",
-      this->workspaceSize, bufferSize, __FUNCTION__);
+      wsp_size, buffer_size, __FUNCTION__);
     
-    if(this->adjStride != nullptr || this->groupOffset != nullptr) {
+    if(adj_col_stride != nullptr || adj_group_offset != nullptr) {
       this->destroy();
     }
-    this->adjStride = reinterpret_cast<Index_t*>(workspace);
-    this->groupOffset = reinterpret_cast<Index_t*>(workspace) + bufferSize / 2;
-    RAFT_CUDA_TRY(
-      cudaMemcpy(
-        this->adjStride, this->nRows, this->nGroups * sizeof(Index_t), cudaMemcpyDeviceToDevice, stream));
-    RAFT_CUDA_TRY(
-      cudaMemcpy(
-        this->groupOffset, this->startRows, this->nGroups * sizeof(Index_t), cudaMemcpyDeviceToDevice, stream));
+    char *wsp_ptr = reinterpret_cast<char*>(workspace);
+    adj_col_stride = reinterpret_cast<Index_t*>(wsp_ptr);
+    adj_group_offset = reinterpret_cast<Index_t*>(wsp_ptr + buffer_size / 2);
+    RAFT_CUDA_TRY(cudaMemcpyAsync(
+      adj_col_stride, this->n_rows_ptr, this->n_groups * sizeof(Index_t), cudaMemcpyDeviceToDevice, stream));
+    h_adj_group_offset = new Index_t[this->n_groups];
 
-    thrust::device_ptr<Index_t> dev_offset = thrust::device_pointer_cast(this->groupOffset);
-    thrust::for_each(
-      handle.get_thrust_policy(), dev_offset, dev_offset + this->nGroups, multiply_scalar<Index_t>(this->stride));
+    if (!optim_layout) {
+      RAFT_CUDA_TRY(cudaMemcpyAsync(
+        adj_group_offset, this->row_start_ids, this->n_groups * sizeof(Index_t), cudaMemcpyDeviceToDevice, stream));
+      RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
+      auto counting = thrust::make_counting_iterator<Index_t>(0);
+      Index_t *temp = adj_group_offset;
+      const Index_t scalar = max_nbr;
+      thrust::for_each(
+        handle.get_thrust_policy(), counting, counting + this->n_groups, [=] __device__(Index_t idx) {
+          temp[idx] = temp[idx] * scalar;
+        });
+
+    } else {
+      const Index_t *host_n_rows = this->metadata->get_host_rows();
+      for(Index_t i = 0, offset = 0; i < this->n_groups; ++i) {
+        h_adj_group_offset[i] = offset;
+        offset += raft::alignTo<std::size_t>(sizeof(bool) * host_n_rows[i] * host_n_rows[i], align);
+      }
+      RAFT_CUDA_TRY(cudaMemcpyAsync(
+        adj_group_offset, h_adj_group_offset, this->n_groups * sizeof(Index_t), cudaMemcpyHostToDevice, stream));
+    }
     return;
   }
+
   void destroy() {
-    this->adjStride = nullptr;
-    this->groupOffset = nullptr;
+    adj_col_stride = nullptr;
+    adj_group_offset = nullptr;
+    if (h_adj_group_offset == nullptr) {
+      delete[] h_adj_group_offset;
+      h_adj_group_offset = nullptr;
+    }
     return;
   }
 
-  const Index_t stride;
-  const Index_t *nRows;
-  const Index_t *startRows;
-  Index_t *adjStride = nullptr;
-  Index_t *groupOffset = nullptr;
-  size_t workspaceSize;
+  bool optim_layout = false;
+  const Index_t max_nbr;
+  Data_t *adj;
+  Index_t *adj_col_stride = nullptr;   // stride of cols for different groups
+  Index_t *adj_group_offset = nullptr; // offset of groups
+  size_t wsp_size;
+ private:
+  Index_t *h_adj_group_offset = nullptr;
 };
 
 template <typename Data_t,
@@ -304,73 +307,45 @@ template <typename Data_t,
           typename BaseClass = BaseAccessor<Data_t, Index_t, MetaDataClass>>
 class CorePointAccessor : public BaseClass {
  public:
-  CorePointAccessor(const MetaDataClass& inMetadata, Data_t *inData) 
-   : BaseClass(inMetadata, inData), nSamples(inMetadata.nRowsSum) {}
+  CorePointAccessor(const MetaDataClass *_metadata, Data_t *_data) 
+   : BaseClass(_metadata, _data), 
+     core_pts(_data) {}
 
-  size_t getWorkspaceSize() { 
-    return raft::alignTo<std::size_t>(this->nGroups * sizeof(Index_t));
+  size_t get_wsp_size() { 
+    return raft::alignTo<std::size_t>(this->n_points * sizeof(Index_t), align);
   }
 
-  void initialize(const raft::handle_t& handle, void *workspace, size_t bufferSize, cudaStream_t stream) {
-    this->workspaceSize = this->getWorkspaceSize();
-    ASSERT(bufferSize == this->workspaceSize,
+  void initialize(const raft::handle_t& handle, void *workspace, size_t buffer_size, cudaStream_t stream) {
+    wsp_size = this->get_wsp_size();
+    ASSERT(buffer_size == wsp_size,
       "The required size of workspace (%ld) doesn't match that passed (%ld) in %s.\n",
-      this->workspaceSize, bufferSize, __FUNCTION__);
+      wsp_size, buffer_size, __FUNCTION__);
     
-    if(this->offsetMask != nullptr) {
+    if(offset_mask != nullptr) {
       this->destroy();
     }
-    this->offsetMask = reinterpret_cast<Index_t*>(workspace);
-    dim3 gridSize {this->nGroups};
-    dim3 blkSize {align / sizeof(Index_t)};
-    initOffsetMask<<<gridSize, blkSize, 0, stream>>>(this->offsetMask, this->nRows, this->startRows, this->nGroups);
+
+    offset_mask = reinterpret_cast<Index_t*>(workspace);
+    dim3 gridSize {static_cast<unsigned int>(this->n_groups)};
+    dim3 blkSize {64};
+    init_offset_mask<<<gridSize, blkSize, 0, stream>>>(
+      offset_mask, this->n_rows_ptr, this->row_start_ids, this->n_groups);
     RAFT_CUDA_TRY(cudaPeekAtLastError());
+    return;
   }
 
   void destroy() {
-    this->offsetMask = nullptr;
+    offset_mask = nullptr;
+    return;
   }
 
-  Index_t nSamples;
-  Index_t *offsetMask = nullptr;
-  size_t workspaceSize;
+  Data_t *core_pts;
+  Index_t *offset_mask = nullptr;
+  size_t wsp_size;
 };
 
 
-// template <typename Data_t,
-//           typename Index_t = int,
-//           typename MetaDataClass = MultiGroupMetaData<Index_t>,
-//           typename BaseClass = BaseAccessor<Data_t, Index_t, MetaDataClass>>
-// class PointAccessorDeprecated : public BaseClass {
-//  public:
-//   PointAccessorDeprecated(const MetaDataClass& inMetadata, const Data_t *inData)
-//    : BaseClass(inMetadata, inData) {
-//     this->nLgRows = inMetadata.nRowsMax;
-//     this->nLgCols = inMetadata.nColsMax;
-//     this->stride = inMetadata.nRowsMax * inMetadata.nColsMax;
-//   }
-
-//   /* 
-//   HDI Data_t& operator[] (Index_t idx) {
-//     Index_t groupId = idx / stride;
-//     Index_t rowId = (idx / nLgCols) % nLgRows;
-//     Index_t colId = idx % nLgCols;
-//     if(rowId < this->nRowsPerGroup[groupId]) {
-//       return this->readonly_data[groupBase[groupId] + rowId * nLgCols + colId];
-//     } else {
-//       return static_cast<Data_t>(0);
-//     }
-//   } 
-//   */
-
-//   Index_t nLgRows;
-//   Index_t nLgCols;
-//   Index_t stride;
-//  private:
-//   Index_t *nRowsPerGroup;
-//   Index_t *groupBase;
-// };
-
 }  // namespace Metadata
+}  // namespace Multigroups
 }  // namespace Dbscan
 }  // namespace ML

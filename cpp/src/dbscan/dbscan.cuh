@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <vector>
 
 namespace ML {
 namespace Dbscan {
@@ -207,22 +208,159 @@ void dbscanFitImpl(const raft::handle_t& handle,
                               metric);
 }
 
+template <typename Index_ = int>
+void mg_dbscan_scheduler(size_t max_mbytes_per_dispatch,
+                         Index_ n_groups,
+                         Index_ *n_rows_ptr,
+                         Index_ *neigh_rows_ptr,
+                         std::vector<std::vector<Index_>>& grouped_row_ids)
+{
+  std::vector<Index_> group;
+  size_t accum_est_mem = 0;
+  for(Index_ i = 0; i < n_groups; ++i) {
+    Index_ n_rows = n_rows_ptr[i];
+    Index_ neigh_per_row = neigh_rows_ptr[i];
+
+    /* Memory needed per group:
+     *  - Dense adj matrix: n_rows * n_rows (bool)
+     *  - Sparse adj matrix: n_rows * neigh_per_row (Index_)
+     *  - Vertex degrees: n_rows (Index_)
+     *  - Ex scan: n_rows (Index_)
+     *  - Core point mask: n_rows (bool)
+     *  - Temporary buffer: n_rows (Index_)
+     */
+    size_t est_mem_per_row = (n_rows + 1) * sizeof(bool) + (neigh_per_row + 3) * sizeof(Index_);
+    size_t est_mem = est_mem_per_row * n_rows;
+    // The rest will be so small that it should fit into what we have left over
+    // from the over-estimation of the sparse adjacency matrix
+
+    accum_est_mem += est_mem;
+    if(accum_est_mem >= max_mbytes_per_dispatch * 1000000) {
+      if(!group.empty()) {
+        grouped_row_ids.emplace_back(std::move(group));
+        group.clear();
+      }
+    }
+    group.emplace_back(i);
+  }
+  grouped_row_ids.emplace_back(group);
+  return;
+}
+
 template <typename T, typename Index_ = int, bool opg = false>
 void dbscanFitImpl(const raft::handle_t& handle,
                    T* input,
                    Index_ n_groups,
-                   Index_* n_rows,
+                   Index_* n_rows_ptr,
                    Index_ n_cols,
-                   T* eps,
-                   Index_* min_pts,
+                   const T* eps_ptr,
+                   const Index_* min_pts_ptr,
                    raft::distance::DistanceType metric,
                    Index_* labels,
                    Index_* core_sample_indices,
-                   size_t max_mbytes_per_batch,
+                   size_t max_mbytes_per_dispatch,
                    cudaStream_t stream,
                    int verbosity)
 {
-  return;
+  raft::common::nvtx::range fun_scope("ML::Dbscan::Fit");
+  ML::Logger::get().setLevel(verbosity);
+  /// NOTE: for algo_vd, 0 (naive) and 2 (precomputed) are not supported.
+  ///       for algo_adj, 0 (naive) is not supported.
+  int algo_vd  = 1;
+  int algo_adj = 1;
+  int algo_ccl = 2;
+
+  Index_ accum_rows = thrust::reduce(thrust::host, n_rows_ptr, n_rows_ptr + n_groups);
+  ASSERT(accum_rows > 0, "No rows in the input array. DBSCAN cannot be fitted!");
+
+  // Estimate available memory per dispatch
+  // Note: we can't rely on the reported free memory.
+  if (max_mbytes_per_dispatch == 0) {
+    // Query memory information to get the total memory on the device
+    size_t free_memory, total_memory;
+    RAFT_CUDA_TRY(cudaMemGetInfo(&free_memory, &total_memory));
+
+    size_t dataset_memory = ((size_t)accum_rows * (size_t)n_cols * sizeof(T));
+
+    // The estimate is: 80% * total - dataset
+    max_mbytes_per_dispatch = (80 * total_memory / 100 - dataset_memory) / 1e6;
+
+    CUML_LOG_DEBUG("Dataset memory: %ld MB", (unsigned long long)(dataset_memory / 1e6));
+
+    CUML_LOG_DEBUG("Estimated available memory: %ld / %ld MB",
+                   (unsigned long long)max_mbytes_per_dispatch,
+                   (unsigned long long)(total_memory / 1e6));
+  }
+
+  CUML_LOG_DEBUG("Scheduling input groups");
+  std::vector<std::vector<Index_>> grouped_row_ids;
+  mg_dbscan_scheduler<Index_>(max_mbytes_per_dispatch, n_groups, n_rows_ptr, n_rows_ptr, grouped_row_ids);
+
+  std::vector<Index_> pfx_rows(n_groups, 0);
+  thrust::exclusive_scan(thrust::host, n_rows_ptr, n_rows_ptr + n_groups, pfx_rows.data());
+  for (int i = 0; i < grouped_row_ids.size(); ++i) {
+    std::vector<Index_> group    = grouped_row_ids[i];
+    Index_ dispatch_n_groups             = group.size();
+    Index_ first_row_id                  = group[0];
+    T *dispatch_input                    = input + n_cols * pfx_rows[first_row_id];
+    Index_ *dispatch_n_rows_ptr    = n_rows_ptr + pfx_rows[first_row_id];
+    const T *dispatch_eps_ptr            = eps_ptr + pfx_rows[first_row_id];
+    const Index_ *dispatch_min_pts_ptr         = min_pts_ptr + pfx_rows[first_row_id];
+    Index_ *dispatch_labels              = labels + pfx_rows[first_row_id];
+    Index_ *dispatch_core_sample_indices = 
+      (core_sample_indices == nullptr) ? nullptr : core_sample_indices + pfx_rows[first_row_id];
+
+    if(dispatch_n_groups == 1) {
+      CUML_LOG_DEBUG("Running original DBSCAN for single group");
+      Dbscan::dbscanFitImpl<T, Index_, opg>(handle,
+                                            dispatch_input,
+                                            dispatch_n_rows_ptr[0],
+                                            n_cols,
+                                            dispatch_eps_ptr[0],
+                                            dispatch_min_pts_ptr[0],
+                                            metric,
+                                            dispatch_labels,
+                                            dispatch_core_sample_indices,
+                                            max_mbytes_per_dispatch,
+                                            stream,
+                                            verbosity);
+    } else {
+      size_t workspaceSize = Dbscan::run<T, Index_, opg>(handle,
+                                                         dispatch_input,
+                                                         dispatch_n_groups,
+                                                         dispatch_n_rows_ptr,
+                                                         n_cols,
+                                                         dispatch_eps_ptr,
+                                                         dispatch_min_pts_ptr,
+                                                         dispatch_labels,
+                                                         dispatch_core_sample_indices,
+                                                         algo_vd,
+                                                         algo_adj,
+                                                         algo_ccl,
+                                                         NULL,
+                                                         stream,
+                                                         metric);
+
+    CUML_LOG_DEBUG("Workspace size: %lf MB", (double)workspaceSize * 1e-6);
+
+    rmm::device_uvector<char> workspace(workspaceSize, stream);
+    Dbscan::run<T, Index_, opg>(handle,
+                                dispatch_input,
+                                dispatch_n_groups,
+                                dispatch_n_rows_ptr,
+                                n_cols,
+                                dispatch_eps_ptr,
+                                dispatch_min_pts_ptr,
+                                dispatch_labels,
+                                dispatch_core_sample_indices,
+                                algo_vd,
+                                algo_adj,
+                                algo_ccl,
+                                workspace.data(),
+                                stream,
+                                metric);
+    }
+  }
 }
 
 }  // namespace Dbscan

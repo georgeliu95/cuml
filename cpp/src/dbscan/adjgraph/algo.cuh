@@ -21,7 +21,6 @@
 #include <thrust/scan.h>
 
 #include "pack.h"
-#include "../multigroups/mg_accessor.cuh"
 
 #include <raft/core/handle.hpp>
 #include <raft/sparse/convert/csr.cuh>
@@ -66,46 +65,6 @@ void launcher(const raft::handle_t& handle,
 
   raft::sparse::convert::adj_to_csr(
     handle, adj, data.ex_scan, num_rows, num_cols, row_counters, data.adj_graph);
-  RAFT_CUDA_TRY(cudaPeekAtLastError());
-}
-
-/**
- * @todo To be completed.
- * @brief Converts a boolean adjacency matrix into CSR format.
- *
- * @tparam[Index_]: indexing arithmetic type
- * @param[in] handle: raft::handle_t
- *
- * @param[in,out] data: A struct containing the adjacency matrix, its number of
- *                      columns, and the vertex degrees.
- *
- * @param[in] batch_size: The number of rows of the adjacency matrix data.adj
- * @param     row_counters: A pre-allocated temporary buffer on the device.
- *            Must be able to contain at least `batch_size` elements.
- * @param[in] stream: CUDA stream
- */
-template <typename Index_ = int>
-void launcher(const raft::handle_t& handle,
-              Metadata::AdjGraphAccessor<bool, Index_>& adj_accessor,
-              const Metadata::VertexDegAccessor<Index_, Index_>& vd_accessor,
-              Index_* adj_graph,
-              Index_ adjnnz,
-              Index_* ex_scan,
-              Index_* row_counters,
-              cudaStream_t stream)
-{
-  bool* adj  = adj_accessor.data;
-  Index_* vd = vd_accessor.vd;
-  Index_ nPoints = vd_accessor.nPoints;
-
-  // Compute the exclusive scan of the vertex degrees
-  using namespace thrust;
-  device_ptr<Index_> dev_vd      = device_pointer_cast(vd);
-  device_ptr<Index_> dev_ex_scan = device_pointer_cast(ex_scan);
-  thrust::exclusive_scan(handle.get_thrust_policy(), dev_vd, dev_vd + nPoints, dev_ex_scan);
-
-  // raft::sparse::convert::adj_to_csr(
-  //   handle, adj, data.ex_scan, num_rows, num_cols, row_counters, data.adj_graph);
   RAFT_CUDA_TRY(cudaPeekAtLastError());
 }
 

@@ -19,8 +19,6 @@
 #include "algo.cuh"
 #include "pack.h"
 
-#include "../multigroups/mg_accessor.cuh"
-
 namespace ML {
 namespace Dbscan {
 namespace AdjGraph {
@@ -44,26 +42,6 @@ void run(const raft::handle_t& handle,
       ASSERT(
         false, "Incorrect algo '%d' passed! Naive version of adjgraph has been removed.", algo);
     case 1: Algo::launcher<Index_>(handle, data, batch_size, row_counters, stream); break;
-    default: ASSERT(false, "Incorrect algo passed! '%d'", algo);
-  }
-}
-
-template <typename Index_ = int>
-void run(const raft::handle_t& handle,
-         Metadata::AdjGraphAccessor<bool, Index_>& adj,
-         const Metadata::VertexDegAccessor<Index_, Index_>& vd,
-         Index_* adj_graph,
-         Index_ adjnnz,
-         Index_* ex_scan,
-         int algo,
-         Index_* row_counters,
-         cudaStream_t stream)
-{
-  switch (algo) {
-    case 0:
-      ASSERT(
-        false, "Incorrect algo '%d' passed! Naive version of adjgraph has been removed.", algo);
-    case 1: Algo::launcher<Index_>(handle, adj, vd, adj_graph, adjnnz, ex_scan, row_counters, stream); break;
     default: ASSERT(false, "Incorrect algo passed! '%d'", algo);
   }
 }

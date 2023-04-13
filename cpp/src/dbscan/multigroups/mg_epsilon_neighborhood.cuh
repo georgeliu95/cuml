@@ -8,8 +8,9 @@
 
 namespace ML {
 namespace Dbscan {
+namespace Multigroups {
 namespace VertexDeg {
-namespace Algo {
+namespace EpsNeighborhood {
 
 /* Overwrite from
  * https://github.com/rapidsai/raft/blob/branch-23.04/cpp/include/raft/spatial/knn/detail/epsilon_neighborhood.cuh
@@ -22,7 +23,7 @@ struct MgEpsUnexpL2SqNeighborhood : public BaseClass {
  private:
   typedef Policy P;
 
-  IdxT start_data_id;
+  IdxT data_start_id;
   IdxT adj_stride;
 
   bool* adj;
@@ -46,14 +47,14 @@ struct MgEpsUnexpL2SqNeighborhood : public BaseClass {
                                 IdxT _m,
                                 IdxT _n,
                                 IdxT _k,
-                                IdxT _start_data_id,
+                                IdxT _data_start_id,
                                 IdxT _adj_stride,
                                 DataT _eps,
                                 char* _smem)
     : BaseClass(_x, _y, _m, _n, _k, _smem),
       adj(_adj),
       eps(_eps),
-      start_data_id(_start_data_id),
+      data_start_id(_data_start_id),
       adj_stride(_adj_stride),
       vd(_vd),
       vd_group(_vd_group),
@@ -72,7 +73,7 @@ struct MgEpsUnexpL2SqNeighborhood : public BaseClass {
  private:
   DI void prolog()
   {
-    this->ldgXY(0);
+    this->ldgXY(IdxT(blockIdx.x) * P::Mblk, IdxT(blockIdx.y) * P::Nblk, 0);
 #pragma unroll
     for (int i = 0; i < P::AccRowsPerTh; ++i) {
 #pragma unroll
@@ -82,18 +83,18 @@ struct MgEpsUnexpL2SqNeighborhood : public BaseClass {
     }
     this->stsXY();
     __syncthreads();
-    this->pageWr ^= 1;
+    this->switch_write_buffer();
   }
 
   DI void loop()
   {
     for (int kidx = P::Kblk; kidx < this->k; kidx += P::Kblk) {
-      this->ldgXY(kidx);
+      this->ldgXY(IdxT(blockIdx.x) * P::Mblk, IdxT(blockIdx.y) * P::Nblk, kidx);
       accumulate();  // on the previous k-block
       this->stsXY();
       __syncthreads();
-      this->pageWr ^= 1;
-      this->pageRd ^= 1;
+      this->switch_write_buffer();
+      this->switch_read_buffer();
     }
     accumulate();  // last iteration
   }
@@ -125,7 +126,8 @@ struct MgEpsUnexpL2SqNeighborhood : public BaseClass {
       }
     }
     // perform reduction of adjacency values to compute vertex degrees
-    if (vd != nullptr) { updateVertexDegree(sums); }
+    if (vd != nullptr && vd_group != nullptr && vd_all != nullptr) 
+      updateVertexDegree(sums);
   }
 
   DI void accumulate()
@@ -194,91 +196,85 @@ struct MgEpsUnexpL2SqNeighborhood : public BaseClass {
 
 template <typename DataT, typename IdxT, typename Policy>
 __global__ __launch_bounds__(Policy::Nthreads, 2)
-void MultiGroupEpsUnexpL2SqNeighKernel(Metadata::AdjGraphAccessor<bool, IdxT>& adj_accessor,
-                                       Metadata::VertexDegAccessor<IdxT, IdxT>& vd_accessor,
-                                       const Metadata::PointAccessor<DataT, IdxT>& x_accessor,
-                                       const Metadata::PointAccessor<DataT, IdxT>& y_accessor,
+void MultiGroupEpsUnexpL2SqNeighKernel(Metadata::AdjGraphAccessor<bool, IdxT> adj_ac,
+                                       Metadata::VertexDegAccessor<IdxT, IdxT> vd_ac,
+                                       const Metadata::PointAccessor<DataT, IdxT> x_ac,
+                                       const Metadata::PointAccessor<DataT, IdxT> y_ac,
+                                       bool calc_vd,
                                        DataT* eps)
-  // bool* adj, IdxT* vd, IdxT* vd_group, IdxT* vd_all, const DataT* x, const DataT* y, MetaDataClass metadata, DataT* eps)
 {
   extern __shared__ char smem[];
   IdxT blk_x    = blockIdx.x;
   IdxT blk_y    = blockIdx.y;
   IdxT group_id = blockIdx.z;
 
-  IdxT group_start_row = x_accessor.startRows[group_id];
-  IdxT group_valid_rows = x_accessor.nRows[group_id];
+  IdxT group_start_row  = x_ac.row_start_ids[group_id];
+  IdxT group_valid_rows = x_ac.n_rows_ptr[group_id];
 
-  IdxT nGroups = x_accessor.nGroups;
+  IdxT n_groups = x_ac.n_groups;
   IdxT m = group_valid_rows;
   IdxT n = group_valid_rows;
-  IdxT k = x_accessor.stride;
+  IdxT k = x_ac.feat_size;
 
-  if (group_id >= nGroups || blk_x >= raft::ceildiv<int>(m, Policy::Mblk) ||
+  if (group_id >= n_groups || blk_x >= raft::ceildiv<int>(m, Policy::Mblk) ||
       blk_y >= raft::ceildiv<int>(n, Policy::Nblk))
     return;
 
-  bool* adj      = adj_accessor.data + adj_accessor.groupOffset[group_id];
-  IdxT* vd       = vd_accessor.vd + group_start_row;
-  IdxT* vd_group = vd_accessor.vd_group + group_id;
-  IdxT* vd_all   = vd_accessor.vd_all;
-  const DataT* x = x_accessor.readonly_data + group_start_row * k;
-  const DataT* y = y_accessor.readonly_data + group_start_row * k;
+  bool* adj      = adj_ac.adj + adj_ac.adj_group_offset[group_id];
+  IdxT* vd       = (calc_vd)? vd_ac.vd + group_start_row : nullptr;
+  IdxT* vd_group = (calc_vd)? vd_ac.vd_group + group_id : nullptr;
+  IdxT* vd_all   = (calc_vd)? vd_ac.vd_all : nullptr;
+  const DataT* x = x_ac.pts + group_start_row * k;
+  const DataT* y = y_ac.pts + group_start_row * k;
   DataT eps_val  = eps[group_id];
 
   MgEpsUnexpL2SqNeighborhood<DataT, IdxT, Policy> obj(
-    adj, vd, vd_group, vd_all, x, y, m, n, k, group_start_row, adj_accessor.adjStride[group_id], eps_val, smem);
+    adj, vd, vd_group, vd_all, x, y, m, n, k, group_start_row, adj_ac.adj_col_stride[group_id], eps_val, smem);
   obj.run();
 }
 
 template <typename DataT, typename IdxT, int VecLen>
-static void MultiGroupEpsUnexpL2SqNeighImpl(Metadata::AdjGraphAccessor<bool, IdxT>& adj,
-                                            Metadata::VertexDegAccessor<IdxT, IdxT>& vd,
-                                            const Metadata::PointAccessor<DataT, IdxT>& x,
-                                            const Metadata::PointAccessor<DataT, IdxT>& y,
+static void MultiGroupEpsUnexpL2SqNeighImpl(Metadata::AdjGraphAccessor<bool, IdxT>& adj_ac,
+                                            Metadata::VertexDegAccessor<IdxT, IdxT>& vd_ac,
+                                            const Metadata::PointAccessor<DataT, IdxT>& x_ac,
+                                            const Metadata::PointAccessor<DataT, IdxT>& y_ac,
                                             DataT* eps,
+                                            bool calc_vd,
                                             cudaStream_t stream)
 {
-  IdxT m = x.nRowsMax;
-  IdxT n = x.nRowsMax;
+  IdxT m = x_ac.max_rows;
+  IdxT n = x_ac.max_rows;
   typedef typename raft::linalg::Policy4x4<DataT, VecLen>::Policy Policy;
-  dim3 grid(raft::ceildiv<int>(m, Policy::Mblk), raft::ceildiv<int>(n, Policy::Nblk), x.nGroups);
+  dim3 grid(raft::ceildiv<int>(m, Policy::Mblk), raft::ceildiv<int>(n, Policy::Nblk), x_ac.n_groups);
   dim3 blk(Policy::Nthreads);
   MultiGroupEpsUnexpL2SqNeighKernel<DataT, IdxT, Policy>
-    <<<grid, blk, Policy::SmemSize, stream>>>(adj.data, vd.data, x.readonly_data, y.readonly_data, eps);
+    <<<grid, blk, Policy::SmemSize, stream>>>(adj_ac, vd_ac, x_ac, y_ac, calc_vd, eps);
   RAFT_CUDA_TRY(cudaGetLastError());
 }
 
-/**
- * @brief Computes epsilon neighborhood for the L2-Squared distance metric
- *
- * @tparam DataT   IO and math type
- * @tparam IdxT    Index type
- * TODO: To be completed.
- *
- */
-
 template <typename DataT, typename IdxT = int>
-void MultiGroupEpsUnexpL2SqNeighborhood(Metadata::AdjGraphAccessor<bool, IdxT>& adj,
-                                        Metadata::VertexDegAccessor<IdxT, IdxT>& vd,
-                                        const Metadata::PointAccessor<DataT, IdxT>& x,
-                                        const Metadata::PointAccessor<DataT, IdxT>& y,
+void MultiGroupEpsUnexpL2SqNeighborhood(Metadata::AdjGraphAccessor<bool, IdxT>& adj_ac,
+                                        Metadata::VertexDegAccessor<IdxT, IdxT>& vd_ac,
+                                        const Metadata::PointAccessor<DataT, IdxT>& x_ac,
+                                        const Metadata::PointAccessor<DataT, IdxT>& y_ac,
                                         DataT* eps,
+                                        bool calc_vd,
                                         cudaStream_t stream)
 {
   ASSERT(sizeof(IdxT) == 4 || sizeof(IdxT) == 8, "IdxT should be 4 or 8 bytes");
-  IdxT k = x.stride;
+  IdxT k = x_ac.feat_size;
   size_t bytes = sizeof(DataT) * k;
   if (16 % sizeof(DataT) == 0 && bytes % 16 == 0) {
-    MultiGroupEpsUnexpL2SqNeighImpl<DataT, IdxT, 16 / sizeof(DataT)>(adj, vd, x, y, eps, stream);
+    MultiGroupEpsUnexpL2SqNeighImpl<DataT, IdxT, 16 / sizeof(DataT)>(adj_ac, vd_ac, x_ac, y_ac, eps, calc_vd, stream);
   } else if (8 % sizeof(DataT) == 0 && bytes % 8 == 0) {
-    MultiGroupEpsUnexpL2SqNeighImpl<DataT, IdxT, 8 / sizeof(DataT)>(adj, vd, x, y, eps, stream);
+    MultiGroupEpsUnexpL2SqNeighImpl<DataT, IdxT, 8 / sizeof(DataT)>(adj_ac, vd_ac, x_ac, y_ac, eps, calc_vd, stream);
   } else {
-    MultiGroupEpsUnexpL2SqNeighImpl<DataT, IdxT, 1>(adj, vd, x, y, eps, stream);
+    MultiGroupEpsUnexpL2SqNeighImpl<DataT, IdxT, 1>(adj_ac, vd_ac, x_ac, y_ac, eps, calc_vd, stream);
   }
 }
 
-}  // namespace Algo
+}  // namespace EpsNeighborhood
 }  // end namespace VertexDeg
+}  // namespace Multigroups
 }  // end namespace Dbscan
 }  // namespace ML

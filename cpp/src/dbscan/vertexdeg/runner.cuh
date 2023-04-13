@@ -20,8 +20,6 @@
 #include "pack.h"
 #include "precomputed.cuh"
 
-#include "../multigroups/mg_accessor.cuh"
-
 namespace ML {
 namespace Dbscan {
 namespace VertexDeg {
@@ -51,31 +49,6 @@ void run(const raft::handle_t& handle,
     case 2:
       Precomputed::launcher<Type_f, Index_>(handle, data, start_vertex_id, batch_size, stream);
       break;
-    default: ASSERT(false, "Incorrect algo passed! '%d'", algo);
-  }
-}
-
-template <typename Type_f, typename Index_ = int>
-void run(const raft::handle_t& handle,
-         Metadata::AdjGraphAccessor<bool, Index_>& adj,
-         Metadata::VertexDegAccessor<Index_, Index_>& vd,
-         const Metadata::PointAccessor<Type_f, Index_>& x,
-         Type_f* eps,
-         int algo,
-         cudaStream_t stream,
-         raft::distance::DistanceType metric)
-{
-  switch (algo) {
-    case 0:
-      ASSERT(
-        false, "Incorrect algo '%d' passed! Naive version of vertexdeg has been removed.", algo);
-    case 1:
-      Algo::launcher<Type_f, Index_>(handle, adj, vd, x, eps, stream, metric);
-      // Algo::launcher<Type_f, Index_>(handle, data, 0, 0, stream, metric);
-      break;
-    case 2:
-      ASSERT(
-        false, "Incorrect algo '%d' passed! Precomputed version of vertexdeg is not supported for batching.", algo);
     default: ASSERT(false, "Incorrect algo passed! '%d'", algo);
   }
 }
