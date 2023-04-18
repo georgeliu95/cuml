@@ -126,8 +126,9 @@ struct MgEpsUnexpL2SqNeighborhood : public BaseClass {
       }
     }
     // perform reduction of adjacency values to compute vertex degrees
-    if (vd != nullptr && vd_group != nullptr && vd_all != nullptr) 
-      updateVertexDegree(sums);
+    if (vd == nullptr || vd_group == nullptr || vd_all == nullptr)
+      return;
+    updateVertexDegree(sums);
   }
 
   DI void accumulate()

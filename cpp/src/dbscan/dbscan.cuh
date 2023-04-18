@@ -295,17 +295,18 @@ void dbscanFitImpl(const raft::handle_t& handle,
   CUML_LOG_DEBUG("Scheduling input groups");
   std::vector<std::vector<Index_>> grouped_row_ids;
   mg_dbscan_scheduler<Index_>(max_mbytes_per_dispatch, n_groups, n_rows_ptr, n_rows_ptr, grouped_row_ids);
+  CUML_LOG_DEBUG("Divide input into %lu groups", grouped_row_ids.size());
 
   std::vector<Index_> pfx_rows(n_groups, 0);
   thrust::exclusive_scan(thrust::host, n_rows_ptr, n_rows_ptr + n_groups, pfx_rows.data());
-  for (int i = 0; i < grouped_row_ids.size(); ++i) {
-    std::vector<Index_> group    = grouped_row_ids[i];
-    Index_ dispatch_n_groups             = group.size();
-    Index_ first_row_id                  = group[0];
+  for (size_t i = 0; i < grouped_row_ids.size(); ++i) {
+    std::vector<Index_> dispatch_group   = grouped_row_ids[i];
+    Index_ dispatch_n_groups             = dispatch_group.size();
+    Index_ first_row_id                  = dispatch_group[0];
     T *dispatch_input                    = input + n_cols * pfx_rows[first_row_id];
-    Index_ *dispatch_n_rows_ptr    = n_rows_ptr + pfx_rows[first_row_id];
-    const T *dispatch_eps_ptr            = eps_ptr + pfx_rows[first_row_id];
-    const Index_ *dispatch_min_pts_ptr         = min_pts_ptr + pfx_rows[first_row_id];
+    Index_ *dispatch_n_rows_ptr          = n_rows_ptr + first_row_id;
+    const T *dispatch_eps_ptr            = eps_ptr + first_row_id;
+    const Index_ *dispatch_min_pts_ptr   = min_pts_ptr + first_row_id;
     Index_ *dispatch_labels              = labels + pfx_rows[first_row_id];
     Index_ *dispatch_core_sample_indices = 
       (core_sample_indices == nullptr) ? nullptr : core_sample_indices + pfx_rows[first_row_id];

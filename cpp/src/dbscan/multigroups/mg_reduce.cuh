@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../temp_utils.hpp"
+
 #include "mg_accessor.cuh"
 
 #include <cub/cub.cuh>
@@ -34,7 +36,7 @@ __global__ void __launch_bounds__(Policy::ThreadsPerBlock)
                                const IdxType* dev_d_ptr,
                                const IdxType* dev_n_ptr,
                                const IdxType* dots_offsets,
-                               const IdxType* data_offsets,
+                               const std::size_t* data_offsets,
                                OutType init,
                                MainLambda main_op,
                                ReduceLambda reduce_op,
@@ -48,7 +50,7 @@ __global__ void __launch_bounds__(Policy::ThreadsPerBlock)
   const InType *data_base = data + data_offsets[group_id];
   IdxType D = dev_d_ptr[group_id];
   IdxType N = dev_n_ptr[group_id];
-  
+
   IdxType i = threadIdx.y + (Policy::RowsPerBlock * static_cast<IdxType>(blockIdx.x));
   if (i >= N) return;
 
@@ -80,7 +82,7 @@ void coalescedReductionThin(OutType* dots,
                             const IdxType* dev_d_ptr,
                             const IdxType* dev_n_ptr,
                             const IdxType* dots_offsets,
-                            const IdxType* data_offsets,
+                            const std::size_t* data_offsets,
                             OutType init,
                             cudaStream_t stream,
                             bool inplace           = false,
@@ -112,7 +114,7 @@ void coalescedReductionThinDispatcher(OutType* dots,
                                       const IdxType* dev_d_ptr,
                                       const IdxType* dev_n_ptr,
                                       const IdxType* dots_offsets,
-                                      const IdxType* data_offsets,
+                                      const std::size_t* data_offsets,
                                       OutType init,
                                       cudaStream_t stream,
                                       bool inplace           = false,
@@ -151,7 +153,7 @@ __global__ void __launch_bounds__(TPB) coalescedReductionMediumKernel(OutType* d
                                                                       const IdxType* dev_d_ptr,
                                                                       const IdxType* dev_n_ptr,
                                                                       const IdxType* dots_offsets,
-                                                                      const IdxType* data_offsets,
+                                                                      const std::size_t* data_offsets,
                                                                       OutType init,
                                                                       MainLambda main_op,
                                                                       ReduceLambda reduce_op,
@@ -199,7 +201,7 @@ void coalescedReductionMedium(OutType* dots,
                               const IdxType* dev_d_ptr,
                               const IdxType* dev_n_ptr,
                               const IdxType* dots_offsets,
-                              const IdxType* data_offsets,
+                              const std::size_t* data_offsets,
                               OutType init,
                               cudaStream_t stream,
                               bool inplace           = false,
@@ -230,7 +232,7 @@ void coalescedReductionMediumDispatcher(OutType* dots,
                                         const IdxType* dev_d_ptr,
                                         const IdxType* dev_n_ptr,
                                         const IdxType* dots_offsets,
-                                        const IdxType* data_offsets,
+                                        const std::size_t* data_offsets,
                                         OutType init,
                                         cudaStream_t stream,
                                         bool inplace           = false,
@@ -261,7 +263,7 @@ void MultiGroupCoalescedReduction(OutType* mg_dots,
                                   const IdxType* dev_d_ptr,
                                   const IdxType* dev_n_ptr,
                                   const IdxType* dots_offsets,
-                                  const IdxType* data_offsets,
+                                  const std::size_t* data_offsets,
                                   OutType init,
                                   cudaStream_t stream,
                                   bool inplace           = false,

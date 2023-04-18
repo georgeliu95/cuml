@@ -46,7 +46,9 @@ void launcher(const raft::handle_t& handle,
                           raft::linalg::NormType::L2Norm,
                           true,
                           stream,
-                          [] __device__(value_t in) { return sqrtf(in); });
+                          [] __device__(value_t in) { 
+                            return (in > FLT_EPSILON)? sqrtf(in) : FLT_EPSILON; 
+                          });
 
     /* Cast away constness because the output matrix for normalization cannot be of const type.
      * Input matrix will be modified due to normalization.
@@ -116,8 +118,7 @@ void launcher(const raft::handle_t& handle,
       atomicAdd(vd_group_base, degree);
       atomicAdd(vd_all, degree);
       return degree;
-    });;
-  RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
+    });
 }
 
 template <typename Type_f, typename Index_ = int>

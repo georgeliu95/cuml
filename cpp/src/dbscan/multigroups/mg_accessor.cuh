@@ -11,12 +11,39 @@
 #include <raft/util/cuda_utils.cuh>
 #include <raft/util/cudart_utils.hpp>
 #include <raft/core/handle.hpp>
+#include <rmm/mr/device/pool_memory_resource.hpp>
 
 
 namespace ML {
 namespace Dbscan {
 namespace Multigroups {
 namespace Metadata {
+
+/**
+ * RAII way to temporary set the pooling memory allocator in rmm.
+ * This may be useful for benchmarking functions that do some memory allocations.
+ */
+struct using_pool_memory_res {
+ private:
+  rmm::mr::device_memory_resource* orig_res_;
+  rmm::mr::cuda_memory_resource cuda_res_;
+  rmm::mr::pool_memory_resource<rmm::mr::device_memory_resource> pool_res_;
+
+ public:
+  using_pool_memory_res(size_t initial_size, size_t max_size)
+    : orig_res_(rmm::mr::get_current_device_resource()),
+      pool_res_(&cuda_res_, initial_size, max_size)
+  {
+    rmm::mr::set_current_device_resource(&pool_res_);
+  }
+
+  using_pool_memory_res() : orig_res_(rmm::mr::get_current_device_resource()), pool_res_(&cuda_res_)
+  {
+    rmm::mr::set_current_device_resource(&pool_res_);
+  }
+
+  ~using_pool_memory_res() { rmm::mr::set_current_device_resource(orig_res_); }
+};
 
 template <typename Index_t = int>
 __global__ void init_offset_mask(Index_t* mask, const Index_t* stride, const Index_t* position, Index_t n_groups) {
@@ -221,7 +248,8 @@ class AdjGraphAccessor : public BaseClass {
     adj(_data) {}
 
   size_t get_wsp_size() { 
-    return 2 * raft::alignTo<std::size_t>(this->n_groups * sizeof(Index_t), align);
+    return raft::alignTo<std::size_t>(this->n_groups * sizeof(Index_t), align) + \
+      raft::alignTo<std::size_t>(this->n_groups * sizeof(std::size_t), align);
   }
 
   size_t get_layout_size() {
@@ -231,8 +259,8 @@ class AdjGraphAccessor : public BaseClass {
       thrust::host, 
       host_n_rows, 
       host_n_rows + this->n_groups, 
-      static_cast<Index_t>(0), 
-      [](const Index_t& lhs, const Index_t& rhs) {
+      static_cast<size_t>(0), 
+      [](const size_t& lhs, const Index_t& rhs) {
         return lhs + raft::alignTo<std::size_t>(sizeof(bool) * rhs * rhs, align);
       }
     );
@@ -243,6 +271,7 @@ class AdjGraphAccessor : public BaseClass {
 
   void initialize(const raft::handle_t& handle, void *workspace, size_t buffer_size, cudaStream_t stream) {
     wsp_size = this->get_wsp_size();
+    this->get_layout_size();
     ASSERT(buffer_size == wsp_size,
       "The required size of workspace (%ld) doesn't match that passed (%ld) in %s.\n",
       wsp_size, buffer_size, __FUNCTION__);
@@ -252,31 +281,40 @@ class AdjGraphAccessor : public BaseClass {
     }
     char *wsp_ptr = reinterpret_cast<char*>(workspace);
     adj_col_stride = reinterpret_cast<Index_t*>(wsp_ptr);
-    adj_group_offset = reinterpret_cast<Index_t*>(wsp_ptr + buffer_size / 2);
+    adj_group_offset = reinterpret_cast<std::size_t*>(
+      wsp_ptr + raft::alignTo<std::size_t>(this->n_groups * sizeof(Index_t), align));
     RAFT_CUDA_TRY(cudaMemcpyAsync(
       adj_col_stride, this->n_rows_ptr, this->n_groups * sizeof(Index_t), cudaMemcpyDeviceToDevice, stream));
-    h_adj_group_offset = new Index_t[this->n_groups];
+    h_adj_group_offset = new std::size_t[this->n_groups];
+    // cudaMallocHost(&h_adj_group_offset, this->n_groups * sizeof(Index_t));
 
     if (!optim_layout) {
-      RAFT_CUDA_TRY(cudaMemcpyAsync(
-        adj_group_offset, this->row_start_ids, this->n_groups * sizeof(Index_t), cudaMemcpyDeviceToDevice, stream));
-      RAFT_CUDA_TRY(cudaStreamSynchronize(stream));
       auto counting = thrust::make_counting_iterator<Index_t>(0);
-      Index_t *temp = adj_group_offset;
+      const Index_t *temp_row_start_ids     = this->row_start_ids;
+      std::size_t *temp_adj_group_offset = adj_group_offset;
+      thrust::for_each(
+        handle.get_thrust_policy(), 
+        counting, 
+        counting + this->n_groups, 
+        [temp_adj_group_offset, temp_row_start_ids] __device__(Index_t idx) {
+          temp_adj_group_offset[idx] = static_cast<std::size_t>(temp_row_start_ids[idx]);
+        }
+      );
       const Index_t scalar = max_nbr;
       thrust::for_each(
         handle.get_thrust_policy(), counting, counting + this->n_groups, [=] __device__(Index_t idx) {
-          temp[idx] = temp[idx] * scalar;
+          temp_adj_group_offset[idx] = temp_adj_group_offset[idx] * scalar;
         });
-
     } else {
       const Index_t *host_n_rows = this->metadata->get_host_rows();
-      for(Index_t i = 0, offset = 0; i < this->n_groups; ++i) {
-        h_adj_group_offset[i] = offset;
-        offset += raft::alignTo<std::size_t>(sizeof(bool) * host_n_rows[i] * host_n_rows[i], align);
+      for(struct { int i; std::size_t offset; } v = {0, 0};
+          v.i < this->n_groups; 
+          ++v.i) {
+        h_adj_group_offset[v.i] = v.offset;
+        v.offset += raft::alignTo<std::size_t>(sizeof(bool) * host_n_rows[v.i] * host_n_rows[v.i], align);
       }
       RAFT_CUDA_TRY(cudaMemcpyAsync(
-        adj_group_offset, h_adj_group_offset, this->n_groups * sizeof(Index_t), cudaMemcpyHostToDevice, stream));
+        adj_group_offset, h_adj_group_offset, this->n_groups * sizeof(std::size_t), cudaMemcpyHostToDevice, stream));
     }
     return;
   }
@@ -286,6 +324,7 @@ class AdjGraphAccessor : public BaseClass {
     adj_group_offset = nullptr;
     if (h_adj_group_offset == nullptr) {
       delete[] h_adj_group_offset;
+      // cudaFreeHost(h_adj_group_offset);
       h_adj_group_offset = nullptr;
     }
     return;
@@ -295,10 +334,10 @@ class AdjGraphAccessor : public BaseClass {
   const Index_t max_nbr;
   Data_t *adj;
   Index_t *adj_col_stride = nullptr;   // stride of cols for different groups
-  Index_t *adj_group_offset = nullptr; // offset of groups
+  std::size_t *adj_group_offset = nullptr; // offset of groups
   size_t wsp_size;
  private:
-  Index_t *h_adj_group_offset = nullptr;
+  std::size_t *h_adj_group_offset = nullptr;
 };
 
 template <typename Data_t,

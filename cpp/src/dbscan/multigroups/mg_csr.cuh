@@ -15,7 +15,7 @@ static const constexpr int adj_to_csr_tpb = 512;
 template <typename index_t>
 __global__ void __launch_bounds__(adj_to_csr_tpb)
   multi_group_adj_to_csr_kernel(const bool* mg_adj,         // row-major adjacency matrix
-                                const index_t* adj_offset,  
+                                const std::size_t* adj_offset,  
                                 const index_t* mg_row_ind,  // precomputed row indices
                                 index_t num_groups,         // # groups of adj
                                 const index_t* mg_num_rows,       // # rows of adj
@@ -109,7 +109,7 @@ void multi_group_adj_to_csr(raft::device_resources const& handle,
   dim3 grid(blocks_per_row, grid_rows, grid_groups);
 
   const bool *adj = adj_ac.adj;
-  const index_t *adj_offset = adj_ac.adj_group_offset;
+  const std::size_t *adj_offset = adj_ac.adj_group_offset;
   const index_t *dev_n_rows = adj_ac.n_rows_ptr;
   const index_t *dev_row_startids = adj_ac.row_start_ids;
   const index_t *adj_col_stride = adj_ac.adj_col_stride;
