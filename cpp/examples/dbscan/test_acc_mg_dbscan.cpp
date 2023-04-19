@@ -290,13 +290,37 @@ void run_mg_dbscan(const raft::handle_t& handle,
                    const Index_t nLoops,
                    double& cpuLatency,
                    double& gpuLatency,
-                   int verbosity)
+                   int verbosity,
+                   bool useCustomWorkspace = false)
 {
   cudaStream_t stream = handle.get_stream();
   thrust::cuda::par.on(stream);
   cudaEvent_t start_event, stop_event;
   CUDA_RT_CALL(cudaEventCreate(&start_event));
   CUDA_RT_CALL(cudaEventCreate(&stop_event));
+
+  void* workspace_buffer = nullptr;
+  if (useCustomWorkspace) {
+    size_t workspace_size = 0;
+    ML::Dbscan::fit(handle,
+                    d_inputData,
+                    nGroups,
+                    h_nRows,
+                    nCols,
+                    pEps,
+                    pMinPts,
+                    metric,
+                    nullptr,
+                    nullptr,
+                    max_bytes_per_batch,
+                    verbosity,
+                    nullptr,
+                    &workspace_size,
+                    false);
+    // std::printf("Alloc %lu bytes buffer: %p\n", workspace_size, workspace_buffer);
+    CUDA_RT_CALL(cudaMalloc(&workspace_buffer, workspace_size));
+  }
+  CUDA_RT_CALL(cudaStreamSynchronize(stream));
 
   std::cout << "=== Run Dbscan (multi groups) ===" << std::endl;
   ML::Dbscan::fit(handle,
@@ -311,6 +335,8 @@ void run_mg_dbscan(const raft::handle_t& handle,
                   d_corepts_indices,
                   max_bytes_per_batch,
                   verbosity,
+                  workspace_buffer,
+                  nullptr,
                   false);
 
   cpuLatency = 0;
@@ -328,6 +354,8 @@ void run_mg_dbscan(const raft::handle_t& handle,
                     nullptr,
                     max_bytes_per_batch,
                     verbosity,
+                    workspace_buffer,
+                    nullptr,
                     false);
   }
 
@@ -347,6 +375,8 @@ void run_mg_dbscan(const raft::handle_t& handle,
                     nullptr,
                     max_bytes_per_batch,
                     verbosity,
+                    workspace_buffer,
+                    nullptr,
                     false);
     CUDA_RT_CALL(cudaEventRecord(stop_event, stream));
     CUDA_RT_CALL(cudaStreamSynchronize(stream));
@@ -358,6 +388,9 @@ void run_mg_dbscan(const raft::handle_t& handle,
   }
   cpuLatency /= nLoops;
   gpuLatency /= nLoops;
+  if(useCustomWorkspace) {
+    CUDA_RT_CALL(cudaFree(workspace_buffer));
+  }
   return;
 }
 
@@ -374,6 +407,7 @@ int main(int argc, char* argv[])
   bool bStaticShape = static_cast<bool>(get_argval<int>(argv, argv + argc, "-static", 0));
   bool bNoWarmup    = static_cast<bool>(get_argval<int>(argv, argv + argc, "-nowarmup", 1));
   bool bPrint       = static_cast<bool>(get_argval<int>(argv, argv + argc, "-print", 0));
+  bool bCustomWsp   = static_cast<bool>(get_argval<int>(argv, argv + argc, "-cust", 0));
   int verbosity     = get_argval<int>(argv, argv + argc, "-verb", CUML_LEVEL_INFO);
   size_t max_bytes_per_batch =
     get_argval<size_t>(argv, argv + argc, "-max_bytes_per_batch", (size_t)13e9);
@@ -545,7 +579,8 @@ int main(int argc, char* argv[])
                            nLoops,
                            cpuMgLatency,
                            gpuMgLatency,
-                           verbosity);
+                           verbosity,
+                           bCustomWsp);
     raft::common::nvtx::pop_range();
 
     // Compare the results

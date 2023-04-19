@@ -99,7 +99,9 @@ cumlError_t cumlMultiSpDbscanFit(cumlHandle_t handle,
                                  int* labels,
                                  int* core_sample_indices,
                                  size_t max_bytes_per_batch,
-                                 int verbosity);
+                                 int verbosity,
+                                 void* custom_workspace,
+                                 size_t* custom_workspace_size);
 
 cumlError_t cumlMultiDpDbscanFit(cumlHandle_t handle,
                                  double* input,
@@ -111,7 +113,9 @@ cumlError_t cumlMultiDpDbscanFit(cumlHandle_t handle,
                                  int* labels,
                                  int* core_sample_indices,
                                  size_t max_bytes_per_batch,
-                                 int verbosity);
+                                 int verbosity,
+                                 void* custom_workspace,
+                                 size_t* custom_workspace_size);
 /** @} */
 
 #ifdef __cplusplus

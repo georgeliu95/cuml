@@ -16,3 +16,6 @@
 
 add_executable(dbscan_example dbscan_example.cpp)
 target_link_libraries(dbscan_example cuml++)
+
+add_executable(test_acc_mg_dbscan test_acc_mg_dbscan.cpp)
+target_link_libraries(test_acc_mg_dbscan cuml++)

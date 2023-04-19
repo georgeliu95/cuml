@@ -19,32 +19,6 @@ namespace Dbscan {
 namespace Multigroups {
 namespace Metadata {
 
-/**
- * RAII way to temporary set the pooling memory allocator in rmm.
- * This may be useful for benchmarking functions that do some memory allocations.
- */
-struct using_pool_memory_res {
- private:
-  rmm::mr::device_memory_resource* orig_res_;
-  rmm::mr::cuda_memory_resource cuda_res_;
-  rmm::mr::pool_memory_resource<rmm::mr::device_memory_resource> pool_res_;
-
- public:
-  using_pool_memory_res(size_t initial_size, size_t max_size)
-    : orig_res_(rmm::mr::get_current_device_resource()),
-      pool_res_(&cuda_res_, initial_size, max_size)
-  {
-    rmm::mr::set_current_device_resource(&pool_res_);
-  }
-
-  using_pool_memory_res() : orig_res_(rmm::mr::get_current_device_resource()), pool_res_(&cuda_res_)
-  {
-    rmm::mr::set_current_device_resource(&pool_res_);
-  }
-
-  ~using_pool_memory_res() { rmm::mr::set_current_device_resource(orig_res_); }
-};
-
 template <typename Index_t = int>
 __global__ void init_offset_mask(Index_t* mask, const Index_t* stride, const Index_t* position, Index_t n_groups) {
   int group_id = blockIdx.x;

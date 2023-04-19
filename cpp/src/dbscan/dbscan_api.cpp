@@ -114,7 +114,9 @@ cumlError_t cumlMultiSpDbscanFit(cumlHandle_t handle,
                                  int* labels,
                                  int* core_sample_indices,
                                  size_t max_bytes_per_batch,
-                                 int verbosity)
+                                 int verbosity,
+                                 void* custom_workspace,
+                                 size_t* custom_workspace_size)
 {
   cumlError_t status;
   raft::handle_t* handle_ptr;
@@ -132,7 +134,9 @@ cumlError_t cumlMultiSpDbscanFit(cumlHandle_t handle,
                       labels,
                       core_sample_indices,
                       max_bytes_per_batch,
-                      verbosity);
+                      verbosity,
+                      custom_workspace,
+                      custom_workspace_size);
     }
     // TODO: Implement this
     // catch (const MLCommon::Exception& e)
@@ -157,7 +161,9 @@ cumlError_t cumlMultiDpDbscanFit(cumlHandle_t handle,
                                  int* labels,
                                  int* core_sample_indices,
                                  size_t max_bytes_per_batch,
-                                 int verbosity)
+                                 int verbosity,
+                                 void* custom_workspace,
+                                 size_t* custom_workspace_size)
 {
   cumlError_t status;
   raft::handle_t* handle_ptr;
@@ -175,7 +181,9 @@ cumlError_t cumlMultiDpDbscanFit(cumlHandle_t handle,
                       labels,
                       core_sample_indices,
                       max_bytes_per_batch,
-                      verbosity);
+                      verbosity,
+                      custom_workspace,
+                      custom_workspace_size);
     }
     // TODO: Implement this
     // catch (const MLCommon::Exception& e)

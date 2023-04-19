@@ -374,7 +374,6 @@ std::size_t run(const raft::handle_t& handle,
                 raft::distance::DistanceType metric)
 {
   using namespace Multigroups;
-  Metadata::using_pool_memory_res res;
 
   const std::size_t align = 256;
   Metadata::MultiGroupMetaData<Index_> mg_metadata(n_groups, n_rows_ptr, n_cols);

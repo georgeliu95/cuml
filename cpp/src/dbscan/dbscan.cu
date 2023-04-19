@@ -198,6 +198,8 @@ void fit(const raft::handle_t& handle,
          int* core_sample_indices,
          size_t max_bytes_per_batch,
          int verbosity,
+         void* custom_workspace,
+         size_t* custom_workspace_size,
          bool opg)
 {
   ASSERT(!opg, "DBSCAN for multi-groups doesn't support multi-GPU");
@@ -213,7 +215,9 @@ void fit(const raft::handle_t& handle,
                                    core_sample_indices,
                                    max_bytes_per_batch / 1e6,
                                    handle.get_stream(),
-                                   verbosity);
+                                   verbosity,
+                                   custom_workspace,
+                                   custom_workspace_size);
 }
 
 void fit(const raft::handle_t& handle,
@@ -228,6 +232,8 @@ void fit(const raft::handle_t& handle,
          int* core_sample_indices,
          size_t max_bytes_per_batch,
          int verbosity,
+         void* custom_workspace,
+         size_t* custom_workspace_size,
          bool opg)
 {
   ASSERT(!opg, "DBSCAN for multi-groups doesn't support multi-GPU");
@@ -243,7 +249,9 @@ void fit(const raft::handle_t& handle,
                                     core_sample_indices,
                                     max_bytes_per_batch / 1e6,
                                     handle.get_stream(),
-                                    verbosity);
+                                    verbosity,
+                                    custom_workspace,
+                                    custom_workspace_size);
 }
 
 void fit(const raft::handle_t& handle,
@@ -258,6 +266,8 @@ void fit(const raft::handle_t& handle,
          int64_t* core_sample_indices,
          size_t max_bytes_per_batch,
          int verbosity,
+         void* custom_workspace,
+         size_t* custom_workspace_size,
          bool opg)
 {
   ASSERT(!opg, "DBSCAN for multi-groups doesn't support multi-GPU");
@@ -273,7 +283,9 @@ void fit(const raft::handle_t& handle,
                                        core_sample_indices,
                                        max_bytes_per_batch / 1e6,
                                        handle.get_stream(),
-                                       verbosity);
+                                       verbosity,
+                                       custom_workspace,
+                                       custom_workspace_size);
 }
 
 void fit(const raft::handle_t& handle,
@@ -288,6 +300,8 @@ void fit(const raft::handle_t& handle,
          int64_t* core_sample_indices,
          size_t max_bytes_per_batch,
          int verbosity,
+         void* custom_workspace,
+         size_t* custom_workspace_size,
          bool opg)
 {
   ASSERT(!opg, "DBSCAN for multi-groups doesn't support multi-GPU");
@@ -303,7 +317,9 @@ void fit(const raft::handle_t& handle,
                                         core_sample_indices,
                                         max_bytes_per_batch / 1e6,
                                         handle.get_stream(),
-                                        verbosity);
+                                        verbosity,
+                                        custom_workspace,
+                                        custom_workspace_size);
 }
 
 }  // namespace Dbscan
