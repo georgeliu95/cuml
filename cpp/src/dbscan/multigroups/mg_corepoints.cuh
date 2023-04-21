@@ -13,11 +13,11 @@ void multi_group_compute(const raft::handle_t& handle,
                          Metadata::CorePointAccessor<bool, Index_>& corepts_ac,
                          const Index_* min_pts)
 {
-  Index_ n_groups  = corepts_ac.n_groups;
-  Index_ n_samples = corepts_ac.n_points;
-  const Index_ *vd_base = vd_ac.vd;
-  bool *mask = corepts_ac.core_pts;
-  const Index_ *offset = corepts_ac.offset_mask;
+  Index_ n_groups       = corepts_ac.n_groups;
+  Index_ n_samples      = corepts_ac.n_points;
+  const Index_* vd_base = vd_ac.vd;
+  bool* mask            = corepts_ac.core_pts;
+  const Index_* offset  = corepts_ac.offset_mask;
 
   auto counting = thrust::make_counting_iterator<Index_>(0);
   thrust::for_each(
@@ -26,7 +26,6 @@ void multi_group_compute(const raft::handle_t& handle,
     });
   return;
 }
-
 
 }  // namespace CorePoints
 }  // namespace Multigroups

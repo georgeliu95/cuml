@@ -1,7 +1,5 @@
 #pragma once
 
-#include "../temp_utils.hpp"
-
 #include "mg_accessor.cuh"
 
 #include <cub/cub.cuh>
@@ -46,10 +44,10 @@ __global__ void __launch_bounds__(Policy::ThreadsPerBlock)
   IdxType group_id = blockIdx.z * blockDim.z + threadIdx.z;
   if (group_id >= n_groups) return;
 
-  OutType *dots_base = dots + dots_offsets[group_id];
-  const InType *data_base = data + data_offsets[group_id];
-  IdxType D = dev_d_ptr[group_id];
-  IdxType N = dev_n_ptr[group_id];
+  OutType* dots_base      = dots + dots_offsets[group_id];
+  const InType* data_base = data + data_offsets[group_id];
+  IdxType D               = dev_d_ptr[group_id];
+  IdxType N               = dev_n_ptr[group_id];
 
   IdxType i = threadIdx.y + (Policy::RowsPerBlock * static_cast<IdxType>(blockIdx.x));
   if (i >= N) return;
@@ -94,9 +92,18 @@ void coalescedReductionThin(OutType* dots,
     "coalescedReductionThin<%d,%d>", Policy::LogicalWarpSize, Policy::RowsPerBlock);
   dim3 threads(Policy::LogicalWarpSize, Policy::RowsPerBlock, 1);
   dim3 blocks(raft::ceildiv<IdxType>(N, Policy::RowsPerBlock), 1, n_groups);
-  coalescedReductionThinKernel<Policy>
-    <<<blocks, threads, 0, stream>>>(
-      dots, data, n_groups, dev_d_ptr, dev_n_ptr, dots_offsets, data_offsets, init, main_op, reduce_op, final_op, inplace);
+  coalescedReductionThinKernel<Policy><<<blocks, threads, 0, stream>>>(dots,
+                                                                       data,
+                                                                       n_groups,
+                                                                       dev_d_ptr,
+                                                                       dev_n_ptr,
+                                                                       dots_offsets,
+                                                                       data_offsets,
+                                                                       init,
+                                                                       main_op,
+                                                                       reduce_op,
+                                                                       final_op,
+                                                                       inplace);
   RAFT_CUDA_TRY(cudaPeekAtLastError());
 }
 
@@ -123,20 +130,80 @@ void coalescedReductionThinDispatcher(OutType* dots,
                                       FinalLambda final_op   = raft::identity_op())
 {
   if (D <= IdxType(2)) {
-    coalescedReductionThin<ReductionThinPolicy<2, 64>>(
-      dots, data, n_groups, N, dev_d_ptr, dev_n_ptr, dots_offsets, data_offsets, init, stream, inplace, main_op, reduce_op, final_op);
+    coalescedReductionThin<ReductionThinPolicy<2, 64>>(dots,
+                                                       data,
+                                                       n_groups,
+                                                       N,
+                                                       dev_d_ptr,
+                                                       dev_n_ptr,
+                                                       dots_offsets,
+                                                       data_offsets,
+                                                       init,
+                                                       stream,
+                                                       inplace,
+                                                       main_op,
+                                                       reduce_op,
+                                                       final_op);
   } else if (D <= IdxType(4)) {
-    coalescedReductionThin<ReductionThinPolicy<4, 32>>(
-      dots, data, n_groups, N, dev_d_ptr, dev_n_ptr, dots_offsets, data_offsets, init, stream, inplace, main_op, reduce_op, final_op);
+    coalescedReductionThin<ReductionThinPolicy<4, 32>>(dots,
+                                                       data,
+                                                       n_groups,
+                                                       N,
+                                                       dev_d_ptr,
+                                                       dev_n_ptr,
+                                                       dots_offsets,
+                                                       data_offsets,
+                                                       init,
+                                                       stream,
+                                                       inplace,
+                                                       main_op,
+                                                       reduce_op,
+                                                       final_op);
   } else if (D <= IdxType(8)) {
-    coalescedReductionThin<ReductionThinPolicy<8, 16>>(
-      dots, data, n_groups, N, dev_d_ptr, dev_n_ptr, dots_offsets, data_offsets, init, stream, inplace, main_op, reduce_op, final_op);
+    coalescedReductionThin<ReductionThinPolicy<8, 16>>(dots,
+                                                       data,
+                                                       n_groups,
+                                                       N,
+                                                       dev_d_ptr,
+                                                       dev_n_ptr,
+                                                       dots_offsets,
+                                                       data_offsets,
+                                                       init,
+                                                       stream,
+                                                       inplace,
+                                                       main_op,
+                                                       reduce_op,
+                                                       final_op);
   } else if (D <= IdxType(16)) {
-    coalescedReductionThin<ReductionThinPolicy<16, 8>>(
-      dots, data, n_groups, N, dev_d_ptr, dev_n_ptr, dots_offsets, data_offsets, init, stream, inplace, main_op, reduce_op, final_op);
+    coalescedReductionThin<ReductionThinPolicy<16, 8>>(dots,
+                                                       data,
+                                                       n_groups,
+                                                       N,
+                                                       dev_d_ptr,
+                                                       dev_n_ptr,
+                                                       dots_offsets,
+                                                       data_offsets,
+                                                       init,
+                                                       stream,
+                                                       inplace,
+                                                       main_op,
+                                                       reduce_op,
+                                                       final_op);
   } else {
-    coalescedReductionThin<ReductionThinPolicy<32, 4>>(
-      dots, data, n_groups, N, dev_d_ptr, dev_n_ptr, dots_offsets, data_offsets, init, stream, inplace, main_op, reduce_op, final_op);
+    coalescedReductionThin<ReductionThinPolicy<32, 4>>(dots,
+                                                       data,
+                                                       n_groups,
+                                                       N,
+                                                       dev_d_ptr,
+                                                       dev_n_ptr,
+                                                       dots_offsets,
+                                                       data_offsets,
+                                                       init,
+                                                       stream,
+                                                       inplace,
+                                                       main_op,
+                                                       reduce_op,
+                                                       final_op);
   }
 }
 
@@ -147,18 +214,19 @@ template <int TPB,
           typename MainLambda,
           typename ReduceLambda,
           typename FinalLambda>
-__global__ void __launch_bounds__(TPB) coalescedReductionMediumKernel(OutType* dots,
-                                                                      const InType* data,
-                                                                      IdxType n_groups,
-                                                                      const IdxType* dev_d_ptr,
-                                                                      const IdxType* dev_n_ptr,
-                                                                      const IdxType* dots_offsets,
-                                                                      const std::size_t* data_offsets,
-                                                                      OutType init,
-                                                                      MainLambda main_op,
-                                                                      ReduceLambda reduce_op,
-                                                                      FinalLambda final_op,
-                                                                      bool inplace = false)
+__global__ void __launch_bounds__(TPB)
+  coalescedReductionMediumKernel(OutType* dots,
+                                 const InType* data,
+                                 IdxType n_groups,
+                                 const IdxType* dev_d_ptr,
+                                 const IdxType* dev_n_ptr,
+                                 const IdxType* dots_offsets,
+                                 const std::size_t* data_offsets,
+                                 OutType init,
+                                 MainLambda main_op,
+                                 ReduceLambda reduce_op,
+                                 FinalLambda final_op,
+                                 bool inplace = false)
 {
   typedef cub::BlockReduce<OutType, TPB, cub::BLOCK_REDUCE_RAKING> BlockReduce;
   __shared__ typename BlockReduce::TempStorage temp_storage;
@@ -166,10 +234,10 @@ __global__ void __launch_bounds__(TPB) coalescedReductionMediumKernel(OutType* d
   IdxType group_id = blockIdx.z * blockDim.z + threadIdx.z;
   if (group_id >= n_groups) return;
 
-  OutType *dots_base = dots + dots_offsets[group_id];
-  const InType *data_base = data + data_offsets[group_id];
-  IdxType D = dev_d_ptr[group_id];
-  IdxType N = dev_n_ptr[group_id];
+  OutType* dots_base      = dots + dots_offsets[group_id];
+  const InType* data_base = data + data_offsets[group_id];
+  IdxType D               = dev_d_ptr[group_id];
+  IdxType N               = dev_n_ptr[group_id];
 
   OutType thread_data = init;
   IdxType rowStart    = blockIdx.x * D;
@@ -209,12 +277,22 @@ void coalescedReductionMedium(OutType* dots,
                               ReduceLambda reduce_op = raft::add_op(),
                               FinalLambda final_op   = raft::identity_op())
 {
-  raft::common::nvtx::range<raft::common::nvtx::domain::raft> fun_scope("coalescedReductionMedium<%d>", TPB);
+  raft::common::nvtx::range<raft::common::nvtx::domain::raft> fun_scope(
+    "coalescedReductionMedium<%d>", TPB);
   dim3 threads(TPB, 1, 1);
   dim3 blocks(N, 1, n_groups);
-  coalescedReductionMediumKernel<TPB>
-    <<<blocks, threads, 0, stream>>>(
-      dots, data, n_groups, dev_d_ptr, dev_n_ptr, dots_offsets, data_offsets, init, main_op, reduce_op, final_op, inplace);
+  coalescedReductionMediumKernel<TPB><<<blocks, threads, 0, stream>>>(dots,
+                                                                      data,
+                                                                      n_groups,
+                                                                      dev_d_ptr,
+                                                                      dev_n_ptr,
+                                                                      dots_offsets,
+                                                                      data_offsets,
+                                                                      init,
+                                                                      main_op,
+                                                                      reduce_op,
+                                                                      final_op,
+                                                                      inplace);
   RAFT_CUDA_TRY(cudaPeekAtLastError());
 }
 
@@ -242,8 +320,20 @@ void coalescedReductionMediumDispatcher(OutType* dots,
 {
   // Note: for now, this kernel is only used when D > 256. If this changes in the future, use
   // smaller block sizes when relevant.
-  coalescedReductionMedium<256>(
-    dots, data, n_groups, N, dev_d_ptr, dev_n_ptr, dots_offsets, data_offsets, init, stream, inplace, main_op, reduce_op, final_op);
+  coalescedReductionMedium<256>(dots,
+                                data,
+                                n_groups,
+                                N,
+                                dev_d_ptr,
+                                dev_n_ptr,
+                                dots_offsets,
+                                data_offsets,
+                                init,
+                                stream,
+                                inplace,
+                                main_op,
+                                reduce_op,
+                                final_op);
 }
 
 // Primitive to perform reductions along the coalesced dimension of the matrix, i.e. reduce along
@@ -277,16 +367,42 @@ void MultiGroupCoalescedReduction(OutType* mg_dots,
    */
   const IdxType numSMs = raft::getMultiProcessorCount();
   if (D <= IdxType(256) || N >= IdxType(4) * numSMs) {
-    coalescedReductionThinDispatcher(
-      mg_dots, mg_data, n_groups, D, N, dev_d_ptr, dev_n_ptr, dots_offsets, data_offsets, init, stream, inplace, main_op, reduce_op, final_op);
+    coalescedReductionThinDispatcher(mg_dots,
+                                     mg_data,
+                                     n_groups,
+                                     D,
+                                     N,
+                                     dev_d_ptr,
+                                     dev_n_ptr,
+                                     dots_offsets,
+                                     data_offsets,
+                                     init,
+                                     stream,
+                                     inplace,
+                                     main_op,
+                                     reduce_op,
+                                     final_op);
   } else {
-    coalescedReductionMediumDispatcher(
-      mg_dots, mg_data, n_groups, D, N, dev_d_ptr, dev_n_ptr, dots_offsets, data_offsets, init, stream, inplace, main_op, reduce_op, final_op);
+    coalescedReductionMediumDispatcher(mg_dots,
+                                       mg_data,
+                                       n_groups,
+                                       D,
+                                       N,
+                                       dev_d_ptr,
+                                       dev_n_ptr,
+                                       dots_offsets,
+                                       data_offsets,
+                                       init,
+                                       stream,
+                                       inplace,
+                                       main_op,
+                                       reduce_op,
+                                       final_op);
   }
 }
 
-}
-}
-}
-}
-}
+}  // namespace Reduce
+}  // namespace VertexDeg
+}  // namespace Multigroups
+}  // namespace Dbscan
+}  // namespace ML

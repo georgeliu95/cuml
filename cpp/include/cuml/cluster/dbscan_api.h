@@ -75,10 +75,11 @@ cumlError_t cumlDpDbscanFit(cumlHandle_t handle,
  * @param[in] n_rows_ptr ponter to the numbers of samples in the grouped input feature matrixes
  * @param[in] n_cols number of features in the grouped input feature matrixes
  * @param[in] eps_ptr pointer to the epsilon values to use for epsilon-neighborhood determination
- * @param[in] min_pts_ptr pointer to the minimum numbers of points to determine a cluster for each group
+ * @param[in] min_pts_ptr pointer to the minimum numbers of points to determine a cluster for each
+ * group
  * @param[out] labels (size sum(n_rows)) output labels array
  * @param[out] core_sample_indices (size sum(n_rows)) output array containing the
- *             indices of each core point. If the number of core points of each group is less 
+ *             indices of each core point. If the number of core points of each group is less
  * than n_rows, the right will be padded with -1. Setting this to NULL will prevent calculating
  * the core sample indices
  * @param[in] max_mem_bytes the maximum number of bytes to be used for each batch of

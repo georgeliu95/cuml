@@ -197,5 +197,4 @@ cumlError_t cumlMultiDpDbscanFit(cumlHandle_t handle,
   }
   return status;
 }
-
 }

@@ -126,8 +126,7 @@ struct MgEpsUnexpL2SqNeighborhood : public BaseClass {
       }
     }
     // perform reduction of adjacency values to compute vertex degrees
-    if (vd == nullptr || vd_group == nullptr || vd_all == nullptr)
-      return;
+    if (vd == nullptr || vd_group == nullptr || vd_all == nullptr) return;
     updateVertexDegree(sums);
   }
 
@@ -196,13 +195,13 @@ struct MgEpsUnexpL2SqNeighborhood : public BaseClass {
 };
 
 template <typename DataT, typename IdxT, typename Policy>
-__global__ __launch_bounds__(Policy::Nthreads, 2)
-void MultiGroupEpsUnexpL2SqNeighKernel(Metadata::AdjGraphAccessor<bool, IdxT> adj_ac,
-                                       Metadata::VertexDegAccessor<IdxT, IdxT> vd_ac,
-                                       const Metadata::PointAccessor<DataT, IdxT> x_ac,
-                                       const Metadata::PointAccessor<DataT, IdxT> y_ac,
-                                       bool calc_vd,
-                                       DataT* eps)
+__global__ __launch_bounds__(Policy::Nthreads, 2) void MultiGroupEpsUnexpL2SqNeighKernel(
+  Metadata::AdjGraphAccessor<bool, IdxT> adj_ac,
+  Metadata::VertexDegAccessor<IdxT, IdxT> vd_ac,
+  const Metadata::PointAccessor<DataT, IdxT> x_ac,
+  const Metadata::PointAccessor<DataT, IdxT> y_ac,
+  bool calc_vd,
+  DataT* eps)
 {
   extern __shared__ char smem[];
   IdxT blk_x    = blockIdx.x;
@@ -213,24 +212,35 @@ void MultiGroupEpsUnexpL2SqNeighKernel(Metadata::AdjGraphAccessor<bool, IdxT> ad
   IdxT group_valid_rows = x_ac.n_rows_ptr[group_id];
 
   IdxT n_groups = x_ac.n_groups;
-  IdxT m = group_valid_rows;
-  IdxT n = group_valid_rows;
-  IdxT k = x_ac.feat_size;
+  IdxT m        = group_valid_rows;
+  IdxT n        = group_valid_rows;
+  IdxT k        = x_ac.feat_size;
 
   if (group_id >= n_groups || blk_x >= raft::ceildiv<int>(m, Policy::Mblk) ||
       blk_y >= raft::ceildiv<int>(n, Policy::Nblk))
     return;
 
   bool* adj      = adj_ac.adj + adj_ac.adj_group_offset[group_id];
-  IdxT* vd       = (calc_vd)? vd_ac.vd + group_start_row : nullptr;
-  IdxT* vd_group = (calc_vd)? vd_ac.vd_group + group_id : nullptr;
-  IdxT* vd_all   = (calc_vd)? vd_ac.vd_all : nullptr;
+  IdxT* vd       = (calc_vd) ? vd_ac.vd + group_start_row : nullptr;
+  IdxT* vd_group = (calc_vd) ? vd_ac.vd_group + group_id : nullptr;
+  IdxT* vd_all   = (calc_vd) ? vd_ac.vd_all : nullptr;
   const DataT* x = x_ac.pts + group_start_row * k;
   const DataT* y = y_ac.pts + group_start_row * k;
   DataT eps_val  = eps[group_id];
 
-  MgEpsUnexpL2SqNeighborhood<DataT, IdxT, Policy> obj(
-    adj, vd, vd_group, vd_all, x, y, m, n, k, group_start_row, adj_ac.adj_col_stride[group_id], eps_val, smem);
+  MgEpsUnexpL2SqNeighborhood<DataT, IdxT, Policy> obj(adj,
+                                                      vd,
+                                                      vd_group,
+                                                      vd_all,
+                                                      x,
+                                                      y,
+                                                      m,
+                                                      n,
+                                                      k,
+                                                      group_start_row,
+                                                      adj_ac.adj_col_stride[group_id],
+                                                      eps_val,
+                                                      smem);
   obj.run();
 }
 
@@ -246,7 +256,8 @@ static void MultiGroupEpsUnexpL2SqNeighImpl(Metadata::AdjGraphAccessor<bool, Idx
   IdxT m = x_ac.max_rows;
   IdxT n = x_ac.max_rows;
   typedef typename raft::linalg::Policy4x4<DataT, VecLen>::Policy Policy;
-  dim3 grid(raft::ceildiv<int>(m, Policy::Mblk), raft::ceildiv<int>(n, Policy::Nblk), x_ac.n_groups);
+  dim3 grid(
+    raft::ceildiv<int>(m, Policy::Mblk), raft::ceildiv<int>(n, Policy::Nblk), x_ac.n_groups);
   dim3 blk(Policy::Nthreads);
   MultiGroupEpsUnexpL2SqNeighKernel<DataT, IdxT, Policy>
     <<<grid, blk, Policy::SmemSize, stream>>>(adj_ac, vd_ac, x_ac, y_ac, calc_vd, eps);
@@ -263,14 +274,17 @@ void MultiGroupEpsUnexpL2SqNeighborhood(Metadata::AdjGraphAccessor<bool, IdxT>& 
                                         cudaStream_t stream)
 {
   ASSERT(sizeof(IdxT) == 4 || sizeof(IdxT) == 8, "IdxT should be 4 or 8 bytes");
-  IdxT k = x_ac.feat_size;
+  IdxT k       = x_ac.feat_size;
   size_t bytes = sizeof(DataT) * k;
   if (16 % sizeof(DataT) == 0 && bytes % 16 == 0) {
-    MultiGroupEpsUnexpL2SqNeighImpl<DataT, IdxT, 16 / sizeof(DataT)>(adj_ac, vd_ac, x_ac, y_ac, eps, calc_vd, stream);
+    MultiGroupEpsUnexpL2SqNeighImpl<DataT, IdxT, 16 / sizeof(DataT)>(
+      adj_ac, vd_ac, x_ac, y_ac, eps, calc_vd, stream);
   } else if (8 % sizeof(DataT) == 0 && bytes % 8 == 0) {
-    MultiGroupEpsUnexpL2SqNeighImpl<DataT, IdxT, 8 / sizeof(DataT)>(adj_ac, vd_ac, x_ac, y_ac, eps, calc_vd, stream);
+    MultiGroupEpsUnexpL2SqNeighImpl<DataT, IdxT, 8 / sizeof(DataT)>(
+      adj_ac, vd_ac, x_ac, y_ac, eps, calc_vd, stream);
   } else {
-    MultiGroupEpsUnexpL2SqNeighImpl<DataT, IdxT, 1>(adj_ac, vd_ac, x_ac, y_ac, eps, calc_vd, stream);
+    MultiGroupEpsUnexpL2SqNeighImpl<DataT, IdxT, 1>(
+      adj_ac, vd_ac, x_ac, y_ac, eps, calc_vd, stream);
   }
 }
 

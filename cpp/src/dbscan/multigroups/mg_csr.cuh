@@ -2,7 +2,6 @@
 
 #include <raft/util/device_atomics.cuh>
 
-
 namespace ML {
 namespace Dbscan {
 namespace Multigroups {
@@ -14,29 +13,29 @@ static const constexpr int adj_to_csr_tpb = 512;
 
 template <typename index_t>
 __global__ void __launch_bounds__(adj_to_csr_tpb)
-  multi_group_adj_to_csr_kernel(const bool* mg_adj,         // row-major adjacency matrix
-                                const std::size_t* adj_offset,  
-                                const index_t* mg_row_ind,  // precomputed row indices
-                                index_t num_groups,         // # groups of adj
-                                const index_t* mg_num_rows,       // # rows of adj
-                                const index_t* row_start_ids,     
-                                const index_t* adj_col_stride,    // stride of adj
-                                index_t* mg_row_counters,   // pre-allocated (zeroed) atomic counters
-                                index_t* out_col_ind        // output column indices
+  multi_group_adj_to_csr_kernel(const bool* mg_adj,  // row-major adjacency matrix
+                                const std::size_t* adj_offset,
+                                const index_t* mg_row_ind,   // precomputed row indices
+                                index_t num_groups,          // # groups of adj
+                                const index_t* mg_num_rows,  // # rows of adj
+                                const index_t* row_start_ids,
+                                const index_t* adj_col_stride,  // stride of adj
+                                index_t* mg_row_counters,  // pre-allocated (zeroed) atomic counters
+                                index_t* out_col_ind       // output column indices
   )
 {
   index_t group_id = blockIdx.z * blockDim.z + threadIdx.z;
-  if(group_id >= num_groups) return;
+  if (group_id >= num_groups) return;
 
   const int chunk_size = 16;
   typedef raft::TxN_t<bool, chunk_size> chunk_bool;
 
-  index_t num_rows = mg_num_rows[group_id];
-  index_t num_cols = adj_col_stride[group_id];
-  const bool* adj = mg_adj + adj_offset[group_id];
+  index_t num_rows                 = mg_num_rows[group_id];
+  index_t num_cols                 = adj_col_stride[group_id];
+  const bool* adj                  = mg_adj + adj_offset[group_id];
   const index_t out_col_ind_offset = row_start_ids[group_id];
-  const index_t* row_ind = mg_row_ind + out_col_ind_offset;
-  index_t* row_counters = mg_row_counters + out_col_ind_offset;
+  const index_t* row_ind           = mg_row_ind + out_col_ind_offset;
+  index_t* row_counters            = mg_row_counters + out_col_ind_offset;
 
   for (index_t i = blockIdx.y; i < num_rows; i += gridDim.y) {
     // Load row information
@@ -49,7 +48,9 @@ __global__ void __launch_bounds__(adj_to_csr_tpb)
     index_t j0 = (chunk_size - (((uintptr_t)(const void*)row) % chunk_size)) % chunk_size;
     j0         = min(j0, num_cols);
     if (threadIdx.x < j0 && blockIdx.x == 0) {
-      if (row[threadIdx.x]) { out_col_ind[row_base + atomicIncWarp(row_count)] = threadIdx.x + out_col_ind_offset; }
+      if (row[threadIdx.x]) {
+        out_col_ind[row_base + atomicIncWarp(row_count)] = threadIdx.x + out_col_ind_offset;
+      }
     }
 
     // Process the rest of the row in chunk_size byte chunks starting at j0.
@@ -59,7 +60,9 @@ __global__ void __launch_bounds__(adj_to_csr_tpb)
       chunk_bool chunk;
       chunk.load(row, j);
       for (int k = 0; k < chunk_size; ++k) {
-        if (chunk.val.data[k]) { out_col_ind[row_base + atomicIncWarp(row_count)] = j + k + out_col_ind_offset; }
+        if (chunk.val.data[k]) {
+          out_col_ind[row_base + atomicIncWarp(row_count)] = j + k + out_col_ind_offset;
+        }
       }
     }
 
@@ -108,14 +111,21 @@ void multi_group_adj_to_csr(raft::device_resources const& handle,
   dim3 block(adj_to_csr_tpb, 1, 1);
   dim3 grid(blocks_per_row, grid_rows, grid_groups);
 
-  const bool *adj = adj_ac.adj;
-  const std::size_t *adj_offset = adj_ac.adj_group_offset;
-  const index_t *dev_n_rows = adj_ac.n_rows_ptr;
-  const index_t *dev_row_startids = adj_ac.row_start_ids;
-  const index_t *adj_col_stride = adj_ac.adj_col_stride;
+  const bool* adj                 = adj_ac.adj;
+  const std::size_t* adj_offset   = adj_ac.adj_group_offset;
+  const index_t* dev_n_rows       = adj_ac.n_rows_ptr;
+  const index_t* dev_row_startids = adj_ac.row_start_ids;
+  const index_t* adj_col_stride   = adj_ac.adj_col_stride;
 
-  multi_group_adj_to_csr_kernel<index_t><<<grid, block, 0, stream>>>(
-    adj, adj_offset, row_ind, n_groups, dev_n_rows, dev_row_startids, adj_col_stride, row_counter, out_col_ind);
+  multi_group_adj_to_csr_kernel<index_t><<<grid, block, 0, stream>>>(adj,
+                                                                     adj_offset,
+                                                                     row_ind,
+                                                                     n_groups,
+                                                                     dev_n_rows,
+                                                                     dev_row_startids,
+                                                                     adj_col_stride,
+                                                                     row_counter,
+                                                                     out_col_ind);
   RAFT_CUDA_TRY(cudaPeekAtLastError());
 }
 

@@ -27,28 +27,28 @@ void launcher(const raft::handle_t& handle,
   ASSERT(sizeof(index_t) == 4 || sizeof(index_t) == 8, "index_t should be 4 or 8 bytes");
 
   const index_t n_groups = x_ac.n_groups;
-  index_t m = x_ac.n_points;
-  index_t k = x_ac.feat_size;
-  const value_t *x = x_ac.pts;
+  index_t m              = x_ac.n_points;
+  index_t k              = x_ac.feat_size;
+  const value_t* x       = x_ac.pts;
 
   // Compute adjacency matrix `adj` using Cosine or L2 metric.
-  if(metric == raft::distance::DistanceType::CosineExpanded) {
+  if (metric == raft::distance::DistanceType::CosineExpanded) {
     auto counting = thrust::make_counting_iterator<index_t>(0);
-    thrust::for_each(handle.get_thrust_policy(), counting, counting + n_groups, [=] __device__(index_t idx) {
-      eps[idx] *= 2;
-    });
+    thrust::for_each(
+      handle.get_thrust_policy(), counting, counting + n_groups, [=] __device__(index_t idx) {
+        eps[idx] *= 2;
+      });
     rmm::device_uvector<value_t> rowNorms(m, stream);
 
-    raft::linalg::rowNorm(rowNorms.data(),
-                          x,
-                          k,
-                          m,
-                          raft::linalg::NormType::L2Norm,
-                          true,
-                          stream,
-                          [] __device__(value_t in) { 
-                            return (in > FLT_EPSILON)? sqrtf(in) : FLT_EPSILON; 
-                          });
+    raft::linalg::rowNorm(
+      rowNorms.data(),
+      x,
+      k,
+      m,
+      raft::linalg::NormType::L2Norm,
+      true,
+      stream,
+      [] __device__(value_t in) { return (in > FLT_EPSILON) ? sqrtf(in) : FLT_EPSILON; });
 
     /* Cast away constness because the output matrix for normalization cannot be of const type.
      * Input matrix will be modified due to normalization.
@@ -82,9 +82,10 @@ void launcher(const raft::handle_t& handle,
       stream);
   } else {
     auto counting = thrust::make_counting_iterator<index_t>(0);
-    thrust::for_each(handle.get_thrust_policy(), counting, counting + n_groups, [=] __device__(index_t idx) {
-      eps[idx] = eps[idx] * eps[idx];
-    });
+    thrust::for_each(
+      handle.get_thrust_policy(), counting, counting + n_groups, [=] __device__(index_t idx) {
+        eps[idx] = eps[idx] * eps[idx];
+      });
 
     // 1. The output matrix adj is now an n x m matrix (row-major order)
     // 2. Do not compute the vertex degree in epsUnexpL2SqNeighborhood (pass a
@@ -93,9 +94,9 @@ void launcher(const raft::handle_t& handle,
       adj_ac, vd_ac, x_ac, x_ac, eps, false, stream);
   }
   // Reduction
-  index_t *vd       = vd_ac.vd;
-  index_t *vd_group = vd_ac.vd_group;
-  index_t *vd_all   = vd_ac.vd_all;
+  index_t* vd       = vd_ac.vd;
+  index_t* vd_group = vd_ac.vd_group;
+  index_t* vd_all   = vd_ac.vd_all;
 
   Reduce::MultiGroupCoalescedReduction<bool, index_t, index_t>(
     vd_ac.vd,
@@ -113,8 +114,8 @@ void launcher(const raft::handle_t& handle,
     [] __device__(bool adj_ij, index_t idx) { return static_cast<index_t>(adj_ij); },
     raft::Sum<index_t>(),
     [vd_group, vd_all] __device__(index_t degree) {
-      index_t group_id = blockIdx.z * blockDim.z + threadIdx.z;
-      index_t *vd_group_base = vd_group + group_id;
+      index_t group_id       = blockIdx.z * blockDim.z + threadIdx.z;
+      index_t* vd_group_base = vd_group + group_id;
       atomicAdd(vd_group_base, degree);
       atomicAdd(vd_all, degree);
       return degree;
@@ -135,12 +136,12 @@ void run(const raft::handle_t& handle,
     case 0:
       ASSERT(
         false, "Incorrect algo '%d' passed! Naive version of vertexdeg has been removed.", algo);
-    case 1:
-      launcher<Type_f, Index_>(handle, adj_ac, vd_ac, x_ac, eps, stream, metric);
-      break;
+    case 1: launcher<Type_f, Index_>(handle, adj_ac, vd_ac, x_ac, eps, stream, metric); break;
     case 2:
-      ASSERT(
-        false, "Incorrect algo '%d' passed! Precomputed version of vertexdeg is not supported for batching.", algo);
+      ASSERT(false,
+             "Incorrect algo '%d' passed! Precomputed version of vertexdeg is not supported for "
+             "batching.",
+             algo);
     default: ASSERT(false, "Incorrect algo passed! '%d'", algo);
   }
 }

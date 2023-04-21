@@ -113,7 +113,8 @@ void fit(const raft::handle_t& handle,
  * @param[in] n_rows_ptr pointer to the numbers of samples in the grouped input feature matrixes
  * @param[in] n_cols number of features in the grouped input feature matrixes
  * @param[in] eps_ptr pointer to the epsilon values to use for epsilon-neighborhood determination
- * @param[in] min_pts_ptr pointer to the minimum numbers of points to determine a cluster for each group
+ * @param[in] min_pts_ptr pointer to the minimum numbers of points to determine a cluster for each
+ * group
  * @param[out] labels (size sum(n_rows)) output labels array
  * @param[out] core_sample_indices (size sum(n_rows)) output array containing the
  *             indices of each core point. If the number of core points of each group
@@ -138,12 +139,12 @@ void fit(const raft::handle_t& handle,
          const int* min_pts_ptr,
          raft::distance::DistanceType metric,
          int* labels,
-         int* core_sample_indices       = nullptr,
-         size_t max_bytes_per_batch     = 0,
-         int verbosity                  = CUML_LEVEL_INFO,
-         void* custom_workspace         = nullptr,
-         size_t* custom_workspace_size  = nullptr,
-         bool opg                       = false);
+         int* core_sample_indices      = nullptr,
+         size_t max_bytes_per_batch    = 0,
+         int verbosity                 = CUML_LEVEL_INFO,
+         void* custom_workspace        = nullptr,
+         size_t* custom_workspace_size = nullptr,
+         bool opg                      = false);
 void fit(const raft::handle_t& handle,
          double* input,
          int n_groups,
@@ -153,12 +154,12 @@ void fit(const raft::handle_t& handle,
          const int* min_pts_ptr,
          raft::distance::DistanceType metric,
          int* labels,
-         int* core_sample_indices       = nullptr,
-         size_t max_bytes_per_batch     = 0,
-         int verbosity                  = CUML_LEVEL_INFO,
-         void* custom_workspace         = nullptr,
-         size_t* custom_workspace_size  = nullptr,
-         bool opg                       = false);
+         int* core_sample_indices      = nullptr,
+         size_t max_bytes_per_batch    = 0,
+         int verbosity                 = CUML_LEVEL_INFO,
+         void* custom_workspace        = nullptr,
+         size_t* custom_workspace_size = nullptr,
+         bool opg                      = false);
 
 void fit(const raft::handle_t& handle,
          float* input,
@@ -169,12 +170,12 @@ void fit(const raft::handle_t& handle,
          const int64_t* min_pts_ptr,
          raft::distance::DistanceType metric,
          int64_t* labels,
-         int64_t* core_sample_indices   = nullptr,
-         size_t max_bytes_per_batch     = 0,
-         int verbosity                  = CUML_LEVEL_INFO,
-         void* custom_workspace         = nullptr,
-         size_t* custom_workspace_size  = nullptr,
-         bool opg                       = false);
+         int64_t* core_sample_indices  = nullptr,
+         size_t max_bytes_per_batch    = 0,
+         int verbosity                 = CUML_LEVEL_INFO,
+         void* custom_workspace        = nullptr,
+         size_t* custom_workspace_size = nullptr,
+         bool opg                      = false);
 void fit(const raft::handle_t& handle,
          double* input,
          int64_t n_groups,
@@ -184,12 +185,12 @@ void fit(const raft::handle_t& handle,
          const int64_t* min_pts_ptr,
          raft::distance::DistanceType metric,
          int64_t* labels,
-         int64_t* core_sample_indices   = nullptr,
-         size_t max_bytes_per_batch     = 0,
-         int verbosity                  = CUML_LEVEL_INFO,
-         void* custom_workspace         = nullptr,
-         size_t* custom_workspace_size  = nullptr,
-         bool opg                       = false);
+         int64_t* core_sample_indices  = nullptr,
+         size_t max_bytes_per_batch    = 0,
+         int verbosity                 = CUML_LEVEL_INFO,
+         void* custom_workspace        = nullptr,
+         size_t* custom_workspace_size = nullptr,
+         bool opg                      = false);
 
 /** @} */
 

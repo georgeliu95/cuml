@@ -21,12 +21,12 @@
 #include "corepoints/exchange.cuh"
 #include "mergelabels/runner.cuh"
 #include "mergelabels/tree_reduction.cuh"
-#include "vertexdeg/runner.cuh"
 #include "multigroups/mg_accessor.cuh"
-#include "multigroups/mg_vertexdeg.cuh"
 #include "multigroups/mg_adjgraph.cuh"
 #include "multigroups/mg_corepoints.cuh"
 #include "multigroups/mg_labels.cuh"
+#include "multigroups/mg_vertexdeg.cuh"
+#include "vertexdeg/runner.cuh"
 #include <common/nvtx.hpp>
 #include <raft/core/nvtx.hpp>
 #include <raft/label/classlabels.cuh>
@@ -343,7 +343,8 @@ std::size_t run(const raft::handle_t& handle,
  * @param[in]  n_groups     Number of individual groups
  * @param[in]  n_rows_ptr   Pointer to the numbers of samples
  * @param[in]  n_cols       Number of features
- * @param[in]  eps_ptr      Pointer to the epsilon neighborhood criterion (device array of length n_groups)
+ * @param[in]  eps_ptr      Pointer to the epsilon neighborhood criterion (device array of length
+ * n_groups)
  * @param[in]  min_pts_ptr  Pointer to the core points criterion (device array of length n_groups)
  * @param[out] labels       Output labels (device array of length N)
  * @param[out] core_indices If not nullptr, the indices of core points are written in this array
@@ -402,10 +403,10 @@ std::size_t run(const raft::handle_t& handle,
   std::size_t adj_size      = temp_adj_ac.get_layout_size();
   std::size_t core_pts_size = raft::alignTo<std::size_t>(sizeof(bool) * N, align);
   std::size_t m_size        = raft::alignTo<std::size_t>(sizeof(bool), align);
-  std::size_t vd_size       = raft::alignTo<std::size_t>(sizeof(Index_) * (N + n_groups + 1), align);
-  std::size_t ex_scan_size  = raft::alignTo<std::size_t>(sizeof(Index_) * N, align);
-  std::size_t row_cnt_size  = raft::alignTo<std::size_t>(sizeof(Index_) * N, align);
-  std::size_t labels_size   = raft::alignTo<std::size_t>(sizeof(Index_) * N, align);
+  std::size_t vd_size      = raft::alignTo<std::size_t>(sizeof(Index_) * (N + n_groups + 1), align);
+  std::size_t ex_scan_size = raft::alignTo<std::size_t>(sizeof(Index_) * N, align);
+  std::size_t row_cnt_size = raft::alignTo<std::size_t>(sizeof(Index_) * N, align);
+  std::size_t labels_size  = raft::alignTo<std::size_t>(sizeof(Index_) * N, align);
 
   Index_ MAX_LABEL = std::numeric_limits<Index_>::max();
 
@@ -418,17 +419,16 @@ std::size_t run(const raft::handle_t& handle,
   //        (unsigned long)batch_size);
 
   if (workspace == NULL) {
-    auto size =
-      metadata_size + adjac_size + cptac_size + eps_size + min_pts_size + adj_size + \
-      core_pts_size + m_size + vd_size + ex_scan_size + row_cnt_size + labels_size;
+    auto size = metadata_size + adjac_size + cptac_size + eps_size + min_pts_size + adj_size +
+                core_pts_size + m_size + vd_size + ex_scan_size + row_cnt_size + labels_size;
     return size;
   }
 
   // partition the temporary workspace needed for different stages of dbscan.
 
-  Index_ maxadjlen  = 0;
-  Index_ curradjlen = 0;
-  char* temp        = (char*)workspace;
+  Index_ maxadjlen        = 0;
+  Index_ curradjlen       = 0;
+  char* temp              = (char*)workspace;
   Index_* metadata_buffer = (Index_*)temp;
   temp += metadata_size;
   Index_* adjac_buffer = (Index_*)temp;
@@ -461,8 +461,10 @@ std::size_t run(const raft::handle_t& handle,
   Metadata::VertexDegAccessor<Index_, Index_> vd_ac(&mg_metadata, vd);
   Metadata::AdjGraphAccessor<bool, Index_> adj_ac(&mg_metadata, adj);
   Metadata::CorePointAccessor<bool, Index_> corepts_ac(&mg_metadata, core_pts);
-  RAFT_CUDA_TRY(cudaMemcpyAsync(eps2_ptr, eps_ptr, n_groups * sizeof(Type_f), cudaMemcpyHostToDevice, stream));
-  RAFT_CUDA_TRY(cudaMemcpyAsync(min_pts2_ptr, min_pts_ptr, n_groups * sizeof(Index_), cudaMemcpyHostToDevice, stream));
+  RAFT_CUDA_TRY(
+    cudaMemcpyAsync(eps2_ptr, eps_ptr, n_groups * sizeof(Type_f), cudaMemcpyHostToDevice, stream));
+  RAFT_CUDA_TRY(cudaMemcpyAsync(
+    min_pts2_ptr, min_pts_ptr, n_groups * sizeof(Index_), cudaMemcpyHostToDevice, stream));
   RAFT_CUDA_TRY(cudaMemsetAsync(adj, 0, adj_size + core_pts_size + vd_size, stream));
   adj_ac.initialize(handle, adjac_buffer, adjac_size, stream);
   corepts_ac.initialize(handle, cptac_buffer, cptac_size, stream);
@@ -493,53 +495,46 @@ std::size_t run(const raft::handle_t& handle,
     maxadjlen = curradjlen;
     adj_graph.resize(maxadjlen, stream);
   }
-  Multigroups::AdjGraph::run<Index_>(handle,
-                                     adj_ac,
-                                     vd_ac,
-                                     adj_graph.data(),
-                                     curradjlen,
-                                     ex_scan,
-                                     algo_adj,
-                                     row_counters,
-                                     stream);
+  Multigroups::AdjGraph::run<Index_>(
+    handle, adj_ac, vd_ac, adj_graph.data(), curradjlen, ex_scan, algo_adj, row_counters, stream);
   raft::common::nvtx::pop_range();
 
   CUML_LOG_DEBUG("--> Computing connected components");
   raft::common::nvtx::push_range("Trace::Dbscan::WeakCC");
-  raft::sparse::weak_cc_batched<Index_>(
-    labels,
-    ex_scan,
-    adj_graph.data(),
-    curradjlen,
-    N,
-    0,
-    N,
-    &state,
-    stream,
-    [core_pts, N] __device__(Index_ global_id) {
-      return global_id < N ? __ldg((char*)core_pts + global_id) : 0;
-    });
+  raft::sparse::weak_cc_batched<Index_>(labels,
+                                        ex_scan,
+                                        adj_graph.data(),
+                                        curradjlen,
+                                        N,
+                                        0,
+                                        N,
+                                        &state,
+                                        stream,
+                                        [core_pts, N] __device__(Index_ global_id) {
+                                          return global_id < N ? __ldg((char*)core_pts + global_id)
+                                                               : 0;
+                                        });
   raft::common::nvtx::pop_range();
 
   // Final relabel
   raft::common::nvtx::push_range("Trace::Dbscan::FinalRelabel");
   if (algo_ccl == 2) final_relabel(labels, N, stream);
 
-  Index_ *label_bias = labels_temp;
+  Index_* label_bias = labels_temp;
   Multigroups::Labels::label_bias_kernel<Index_, TPB / 2><<<n_groups, TPB / 2, 0, stream>>>(
     labels, label_bias, mg_metadata.get_dev_pfxsum_rows(), n_groups, MAX_LABEL);
 
   std::size_t nblks = raft::ceildiv<std::size_t>(mg_metadata.max_rows, TPB);
   dim3 grid(nblks, n_groups);
-  dim3 blk(TPB, 1); 
-  Multigroups::Labels::multiGroupRelabelForSklKernel<Index_><<<grid, blk, 0, stream>>>(
-    labels,
-    mg_metadata.get_dev_pfxsum_rows(),
-    mg_metadata.get_dev_rows(),
-    label_bias,
-    n_groups,
-    N,
-    MAX_LABEL);
+  dim3 blk(TPB, 1);
+  Multigroups::Labels::multiGroupRelabelForSklKernel<Index_>
+    <<<grid, blk, 0, stream>>>(labels,
+                               mg_metadata.get_dev_pfxsum_rows(),
+                               mg_metadata.get_dev_rows(),
+                               label_bias,
+                               n_groups,
+                               N,
+                               MAX_LABEL);
   raft::common::nvtx::pop_range();
 
   // Calculate the core_indices only if an array was passed in

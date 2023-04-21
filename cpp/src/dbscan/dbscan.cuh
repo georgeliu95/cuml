@@ -23,8 +23,8 @@
 #include <cuml/cluster/dbscan.hpp>
 #include <cuml/common/logger.hpp>
 
-#include <rmm/mr/device/device_memory_resource.hpp>
 #include <rmm/mr/device/cuda_async_memory_resource.hpp>
+#include <rmm/mr/device/device_memory_resource.hpp>
 
 #include <algorithm>
 #include <cstddef>
@@ -214,14 +214,14 @@ void dbscanFitImpl(const raft::handle_t& handle,
 template <typename Index_ = int>
 void mg_dbscan_scheduler(size_t max_mbytes_per_dispatch,
                          Index_ n_groups,
-                         Index_ *n_rows_ptr,
-                         Index_ *neigh_rows_ptr,
+                         Index_* n_rows_ptr,
+                         Index_* neigh_rows_ptr,
                          std::vector<std::vector<Index_>>& grouped_row_ids)
 {
   std::vector<Index_> group;
   size_t accum_est_mem = 0;
-  for(Index_ i = 0; i < n_groups; ++i) {
-    Index_ n_rows = n_rows_ptr[i];
+  for (Index_ i = 0; i < n_groups; ++i) {
+    Index_ n_rows        = n_rows_ptr[i];
     Index_ neigh_per_row = neigh_rows_ptr[i];
 
     /* Memory needed per group:
@@ -233,13 +233,13 @@ void mg_dbscan_scheduler(size_t max_mbytes_per_dispatch,
      *  - Temporary buffer: n_rows (Index_)
      */
     size_t est_mem_per_row = (n_rows + 1) * sizeof(bool) + (neigh_per_row + 3) * sizeof(Index_);
-    size_t est_mem = est_mem_per_row * n_rows;
+    size_t est_mem         = est_mem_per_row * n_rows;
     // The rest will be so small that it should fit into what we have left over
     // from the over-estimation of the sparse adjacency matrix
 
     accum_est_mem += est_mem;
-    if(accum_est_mem >= max_mbytes_per_dispatch * 1000000) {
-      if(!group.empty()) {
+    if (accum_est_mem >= max_mbytes_per_dispatch * 1000000) {
+      if (!group.empty()) {
         grouped_row_ids.emplace_back(std::move(group));
         group.clear();
         accum_est_mem = 0;
@@ -265,7 +265,7 @@ void dbscanFitImpl(const raft::handle_t& handle,
                    size_t max_mbytes_per_dispatch,
                    cudaStream_t stream,
                    int verbosity,
-                   void* custom_workspace = nullptr,
+                   void* custom_workspace        = nullptr,
                    size_t* custom_workspace_size = nullptr)
 {
   raft::common::nvtx::range fun_scope("ML::Dbscan::Fit");
@@ -300,13 +300,14 @@ void dbscanFitImpl(const raft::handle_t& handle,
 
   CUML_LOG_DEBUG("Scheduling input groups");
   std::vector<std::vector<Index_>> grouped_row_ids;
-  mg_dbscan_scheduler<Index_>(max_mbytes_per_dispatch, n_groups, n_rows_ptr, n_rows_ptr, grouped_row_ids);
+  mg_dbscan_scheduler<Index_>(
+    max_mbytes_per_dispatch, n_groups, n_rows_ptr, n_rows_ptr, grouped_row_ids);
   CUML_LOG_DEBUG("Divide input into %lu groups", grouped_row_ids.size());
-  if(verbosity >= CUML_LEVEL_DEBUG) {
+  if (verbosity >= CUML_LEVEL_DEBUG) {
     std::cout << "row_groups: [ ";
-    for(auto group : grouped_row_ids) {
+    for (auto group : grouped_row_ids) {
       std::cout << "[";
-      for(auto it : group) {
+      for (auto it : group) {
         std::cout << n_rows_ptr[it] << " ";
       }
       std::cout << "];";
@@ -320,11 +321,11 @@ void dbscanFitImpl(const raft::handle_t& handle,
   // Get the maximum of workspace size
   size_t max_workspace_size = 0;
   for (size_t i = 0; i < grouped_row_ids.size(); ++i) {
-    std::vector<Index_> dispatch_group   = grouped_row_ids[i];
-    Index_ dispatch_n_groups             = dispatch_group.size();
-    Index_ first_row_id                  = dispatch_group[0];
-    Index_ *dispatch_n_rows_ptr          = n_rows_ptr + first_row_id;
-    if(dispatch_n_groups != 1) {
+    std::vector<Index_> dispatch_group = grouped_row_ids[i];
+    Index_ dispatch_n_groups           = dispatch_group.size();
+    Index_ first_row_id                = dispatch_group[0];
+    Index_* dispatch_n_rows_ptr        = n_rows_ptr + first_row_id;
+    if (dispatch_n_groups != 1) {
       size_t workspaceSize = Dbscan::run<T, Index_, opg>(handle,
                                                          nullptr,
                                                          dispatch_n_groups,
@@ -340,7 +341,8 @@ void dbscanFitImpl(const raft::handle_t& handle,
                                                          NULL,
                                                          stream,
                                                          metric);
-      max_workspace_size = (workspaceSize > max_workspace_size)? workspaceSize : max_workspace_size;
+      max_workspace_size =
+        (workspaceSize > max_workspace_size) ? workspaceSize : max_workspace_size;
     }
   }
   CUML_LOG_DEBUG("Workspace size: %lf MB", (double)max_workspace_size * 1e-6);
@@ -350,9 +352,9 @@ void dbscanFitImpl(const raft::handle_t& handle,
     return;
   }
 
-  using cuda_async_mr = rmm::mr::cuda_async_memory_resource;
-  void* work_buffer = nullptr;
-  void* mr = nullptr;
+  using cuda_async_mr       = rmm::mr::cuda_async_memory_resource;
+  void* work_buffer         = nullptr;
+  void* mr                  = nullptr;
   bool has_custom_workspace = custom_workspace != nullptr;
   if (has_custom_workspace) {
     work_buffer = custom_workspace;
@@ -362,31 +364,33 @@ void dbscanFitImpl(const raft::handle_t& handle,
     rmm::mr::cuda_memory_resource cuda_mr;
     // Construct a resource that uses a coalescing best-fit pool allocator
     rmm::mr::pool_memory_resource<rmm::mr::cuda_memory_resource> pool_mr{&cuda_mr};
-    rmm::mr::set_current_device_resource(&pool_mr); // Updates the current device resource pointer to `pool_mr`
-    mr = reinterpret_cast<void*>(rmm::mr::get_current_device_resource()); // Points to `pool_mr`
+    // Updates the current device resource pointer to `pool_mr`
+    rmm::mr::set_current_device_resource(&pool_mr);
+    // Points to `pool_mr`
+    mr = reinterpret_cast<void*>(rmm::mr::get_current_device_resource());
     work_buffer = mr->allocate(max_workspace_size, stream);
      */
 
     cuda_async_mr* cuda_mr = new cuda_async_mr{max_workspace_size};
-    mr = reinterpret_cast<void*>(cuda_mr);
-    work_buffer = cuda_mr->allocate(max_workspace_size, stream);
+    mr                     = reinterpret_cast<void*>(cuda_mr);
+    work_buffer            = cuda_mr->allocate(max_workspace_size, stream);
     raft::common::nvtx::pop_range();
   }
 
   CUML_LOG_DEBUG("work_buffer: %p with size: %lu", work_buffer, max_workspace_size);
   for (size_t i = 0; i < grouped_row_ids.size(); ++i) {
-    std::vector<Index_> dispatch_group   = grouped_row_ids[i];
-    Index_ dispatch_n_groups             = dispatch_group.size();
-    Index_ first_row_id                  = dispatch_group[0];
-    T *dispatch_input                    = input + n_cols * pfx_rows[first_row_id];
-    Index_ *dispatch_n_rows_ptr          = n_rows_ptr + first_row_id;
-    const T *dispatch_eps_ptr            = eps_ptr + first_row_id;
-    const Index_ *dispatch_min_pts_ptr   = min_pts_ptr + first_row_id;
-    Index_ *dispatch_labels              = labels + pfx_rows[first_row_id];
-    Index_ *dispatch_core_sample_indices = 
+    std::vector<Index_> dispatch_group = grouped_row_ids[i];
+    Index_ dispatch_n_groups           = dispatch_group.size();
+    Index_ first_row_id                = dispatch_group[0];
+    T* dispatch_input                  = input + n_cols * pfx_rows[first_row_id];
+    Index_* dispatch_n_rows_ptr        = n_rows_ptr + first_row_id;
+    const T* dispatch_eps_ptr          = eps_ptr + first_row_id;
+    const Index_* dispatch_min_pts_ptr = min_pts_ptr + first_row_id;
+    Index_* dispatch_labels            = labels + pfx_rows[first_row_id];
+    Index_* dispatch_core_sample_indices =
       (core_sample_indices == nullptr) ? nullptr : core_sample_indices + pfx_rows[first_row_id];
 
-    if(dispatch_n_groups == 1) {
+    if (dispatch_n_groups == 1) {
       CUML_LOG_DEBUG("Running original DBSCAN for single group");
       Dbscan::dbscanFitImpl<T, Index_, opg>(handle,
                                             dispatch_input,
@@ -401,28 +405,27 @@ void dbscanFitImpl(const raft::handle_t& handle,
                                             stream,
                                             verbosity);
     } else {
-    Dbscan::run<T, Index_, opg>(handle,
-                                dispatch_input,
-                                dispatch_n_groups,
-                                dispatch_n_rows_ptr,
-                                n_cols,
-                                dispatch_eps_ptr,
-                                dispatch_min_pts_ptr,
-                                dispatch_labels,
-                                dispatch_core_sample_indices,
-                                algo_vd,
-                                algo_adj,
-                                algo_ccl,
-                                work_buffer,
-                                stream,
-                                metric);
+      Dbscan::run<T, Index_, opg>(handle,
+                                  dispatch_input,
+                                  dispatch_n_groups,
+                                  dispatch_n_rows_ptr,
+                                  n_cols,
+                                  dispatch_eps_ptr,
+                                  dispatch_min_pts_ptr,
+                                  dispatch_labels,
+                                  dispatch_core_sample_indices,
+                                  algo_vd,
+                                  algo_adj,
+                                  algo_ccl,
+                                  work_buffer,
+                                  stream,
+                                  metric);
     }
   }
   if (!has_custom_workspace) {
     // reinterpret_cast<rmm::mr::device_memory_resource*>(mr)->deallocate(
     //  work_buffer, max_workspace_size, stream);
-    reinterpret_cast<cuda_async_mr*>(mr)->deallocate(
-     work_buffer, max_workspace_size, stream);
+    reinterpret_cast<cuda_async_mr*>(mr)->deallocate(work_buffer, max_workspace_size, stream);
   }
 }
 
