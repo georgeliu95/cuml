@@ -350,6 +350,7 @@ void dbscanFitImpl(const raft::handle_t& handle,
     return;
   }
 
+  using cuda_async_mr = rmm::mr::cuda_async_memory_resource;
   void* work_buffer = nullptr;
   void* mr = nullptr;
   bool has_custom_workspace = custom_workspace != nullptr;
@@ -357,7 +358,6 @@ void dbscanFitImpl(const raft::handle_t& handle,
     work_buffer = custom_workspace;
   } else {
     raft::common::nvtx::push_range("Trace::Dbscan::MemMalloc");
-    using cuda_async_mr = rmm::mr::cuda_async_memory_resource;
     /*
     rmm::mr::cuda_memory_resource cuda_mr;
     // Construct a resource that uses a coalescing best-fit pool allocator
@@ -421,8 +421,6 @@ void dbscanFitImpl(const raft::handle_t& handle,
   if (!has_custom_workspace) {
     // reinterpret_cast<rmm::mr::device_memory_resource*>(mr)->deallocate(
     //  work_buffer, max_workspace_size, stream);
-
-    using cuda_async_mr = rmm::mr::cuda_async_memory_resource;
     reinterpret_cast<cuda_async_mr*>(mr)->deallocate(
      work_buffer, max_workspace_size, stream);
   }

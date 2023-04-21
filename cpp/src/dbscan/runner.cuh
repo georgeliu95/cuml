@@ -341,10 +341,10 @@ std::size_t run(const raft::handle_t& handle,
  * @param[in]  N            Number of the concatenated and padding points
  * @param[in]  D            Dimensionality of the concatenated and padding points
  * @param[in]  n_groups     Number of individual groups
- * @param[in]  n_rows_ptr   Numbers of samples
+ * @param[in]  n_rows_ptr   Pointer to the numbers of samples
  * @param[in]  n_cols       Number of features
- * @param[in]  eps_ptr      Epsilon neighborhood criterion (device array of length n_groups)
- * @param[in]  min_pts_ptr  Core points criterion (device array of length n_groups)
+ * @param[in]  eps_ptr      Pointer to the epsilon neighborhood criterion (device array of length n_groups)
+ * @param[in]  min_pts_ptr  Pointer to the core points criterion (device array of length n_groups)
  * @param[out] labels       Output labels (device array of length N)
  * @param[out] core_indices If not nullptr, the indices of core points are written in this array
  * @param[in]  algo_vd      Algorithm used for the vertex degrees
