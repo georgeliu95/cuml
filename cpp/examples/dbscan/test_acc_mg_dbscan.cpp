@@ -408,6 +408,7 @@ int main(int argc, char* argv[])
   bool bNoWarmup    = static_cast<bool>(get_argval<int>(argv, argv + argc, "-nowarmup", 1));
   bool bPrint       = static_cast<bool>(get_argval<int>(argv, argv + argc, "-print", 0));
   bool bCustomWsp   = static_cast<bool>(get_argval<int>(argv, argv + argc, "-cust", 0));
+  int bMetric       = get_argval<int>(argv, argv + argc, "-metric", 0);
   int verbosity     = get_argval<int>(argv, argv + argc, "-verb", CUML_LEVEL_INFO);
   size_t max_bytes_per_batch =
     get_argval<size_t>(argv, argv + argc, "-max_bytes_per_batch", (size_t)13e9);
@@ -521,7 +522,8 @@ int main(int argc, char* argv[])
   {
     using Index_t = int;
     // auto metric = raft::distance::L2SqrtUnexpanded;
-    auto metric = raft::distance::CosineExpanded;
+    auto metric = (bMetric == 1)? raft::distance::CosineExpanded : raft::distance::L2SqrtUnexpanded;
+    std::printf("Running with metric %s\n", (bMetric == 1)? "CosineExpanded" : "L2SqrtUnexpanded");
     std::vector<float> vEps(nGroups, eps);
     std::vector<Index_t> vMinPts(nGroups, minPts);
 
