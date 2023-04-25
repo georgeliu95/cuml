@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) 2018-2022, NVIDIA CORPORATION.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #pragma once
 
 #include <cstdio>
@@ -18,6 +34,8 @@ namespace Dbscan {
 namespace Multigroups {
 namespace Metadata {
 
+const std::size_t align = 256;
+
 template <typename Index_t = int>
 __global__ void init_offset_mask(Index_t* mask,
                                  const Index_t* stride,
@@ -32,8 +50,10 @@ __global__ void init_offset_mask(Index_t* mask,
   return;
 }
 
-const std::size_t align = 256;
-
+/**
+ * Metadata including the number of groups, numbers of rows / cols from different groups on both
+ * host and device, and prefix sum of rows / cols on device.
+ */
 template <typename Index_t = int>
 class MultiGroupMetaData {
  public:
@@ -158,6 +178,9 @@ class MultiGroupMetaData {
   void* workspace          = nullptr;
 };
 
+/**
+ * Accessor is used to access data from concatenated matrixes.
+ */
 template <typename Data_t,
           typename Index_t       = int,
           typename MetaDataClass = MultiGroupMetaData<Index_t>>

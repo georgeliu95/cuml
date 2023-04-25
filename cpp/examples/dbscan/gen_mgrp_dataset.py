@@ -33,7 +33,7 @@ parser.add_argument('--filename_prefix', type=str, default='synthetic',
 parser.add_argument('-sd', '--standard_dev', type=str, default=0.1,
                     help='Standard deviation of samples generated')
 parser.add_argument('-st', '--random_state', type=str, default=123456,
-                    help='Standard deviation of samples generated')
+                    help='Random state of samples generated')
 
 args = parser.parse_args()
 
@@ -43,9 +43,10 @@ datasetFile = '%s-%dx%dx%d-clusters-%d.txt' \
 
 data_list = []
 for g in range(args.num_groups):
+    random_state = np.random.randint(0, args.random_state * 4) % args.random_state
     X, _ = make_blobs(n_samples=args.num_samples, n_features=args.num_features,
                     centers=args.num_clusters, cluster_std=args.standard_dev,
-                    random_state=args.random_state)
+                    random_state=random_state)
     data_list.append(X)
 
 fp = open(datasetFile, 'w')

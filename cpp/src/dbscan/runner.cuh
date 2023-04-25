@@ -21,11 +21,11 @@
 #include "corepoints/exchange.cuh"
 #include "mergelabels/runner.cuh"
 #include "mergelabels/tree_reduction.cuh"
-#include "multigroups/mg_accessor.cuh"
-#include "multigroups/mg_adjgraph.cuh"
-#include "multigroups/mg_corepoints.cuh"
-#include "multigroups/mg_labels.cuh"
-#include "multigroups/mg_vertexdeg.cuh"
+#include "multigroups/mgrp_accessor.cuh"
+#include "multigroups/mgrp_adjgraph.cuh"
+#include "multigroups/mgrp_corepoints.cuh"
+#include "multigroups/mgrp_labels.cuh"
+#include "multigroups/mgrp_vertexdeg.cuh"
 #include "vertexdeg/runner.cuh"
 #include <common/nvtx.hpp>
 #include <raft/core/nvtx.hpp>
@@ -377,10 +377,10 @@ std::size_t run(const raft::handle_t& handle,
   using namespace Multigroups;
 
   const std::size_t align = 256;
-  Metadata::MultiGroupMetaData<Index_> mg_metadata(n_groups, n_rows_ptr, n_cols);
-  Index_ N          = mg_metadata.sum_rows;
+  Metadata::MultiGroupMetaData<Index_> mgrp_metadata(n_groups, n_rows_ptr, n_cols);
+  Index_ N          = mgrp_metadata.sum_rows;
   Index_ D          = n_cols;
-  Index_ n_rows_max = mg_metadata.max_rows;
+  Index_ n_rows_max = mgrp_metadata.max_rows;
 
   /**
    * Note on coupling between data types:
@@ -393,9 +393,9 @@ std::size_t run(const raft::handle_t& handle,
    * elements in their neighborhood, so any IdxType can be safely used, so long as N doesn't
    * overflow.
    */
-  Metadata::AdjGraphAccessor<bool, Index_> temp_adj_ac(&mg_metadata, nullptr);
-  Metadata::CorePointAccessor<bool, Index_> temp_corepts_ac(&mg_metadata, nullptr);
-  std::size_t metadata_size = mg_metadata.get_wsp_size();
+  Metadata::AdjGraphAccessor<bool, Index_> temp_adj_ac(&mgrp_metadata, nullptr);
+  Metadata::CorePointAccessor<bool, Index_> temp_corepts_ac(&mgrp_metadata, nullptr);
+  std::size_t metadata_size = mgrp_metadata.get_wsp_size();
   std::size_t adjac_size    = temp_adj_ac.get_wsp_size();
   std::size_t cptac_size    = temp_corepts_ac.get_wsp_size();
   std::size_t eps_size      = raft::alignTo<std::size_t>(sizeof(Type_f) * n_groups, align);
@@ -456,11 +456,11 @@ std::size_t run(const raft::handle_t& handle,
 
   CUML_LOG_DEBUG("--> Initialize multigroup metadata and accessor");
   raft::common::nvtx::push_range("Trace::Dbscan::MultiGroup");
-  mg_metadata.initialize(handle, metadata_buffer, metadata_size, stream);
-  Metadata::PointAccessor<Type_f, Index_> pts_ac(&mg_metadata, x);
-  Metadata::VertexDegAccessor<Index_, Index_> vd_ac(&mg_metadata, vd);
-  Metadata::AdjGraphAccessor<bool, Index_> adj_ac(&mg_metadata, adj);
-  Metadata::CorePointAccessor<bool, Index_> corepts_ac(&mg_metadata, core_pts);
+  mgrp_metadata.initialize(handle, metadata_buffer, metadata_size, stream);
+  Metadata::PointAccessor<Type_f, Index_> pts_ac(&mgrp_metadata, x);
+  Metadata::VertexDegAccessor<Index_, Index_> vd_ac(&mgrp_metadata, vd);
+  Metadata::AdjGraphAccessor<bool, Index_> adj_ac(&mgrp_metadata, adj);
+  Metadata::CorePointAccessor<bool, Index_> corepts_ac(&mgrp_metadata, core_pts);
   RAFT_CUDA_TRY(
     cudaMemcpyAsync(eps2_ptr, eps_ptr, n_groups * sizeof(Type_f), cudaMemcpyHostToDevice, stream));
   RAFT_CUDA_TRY(cudaMemcpyAsync(
@@ -479,7 +479,7 @@ std::size_t run(const raft::handle_t& handle,
 
   CUML_LOG_DEBUG("--> Computing core point mask");
   raft::common::nvtx::push_range("Trace::Dbscan::CorePoints");
-  Multigroups::CorePoints::multi_group_compute(handle, vd_ac, corepts_ac, min_pts2_ptr);
+  Multigroups::CorePoints::multi_groups_compute(handle, vd_ac, corepts_ac, min_pts2_ptr);
   raft::common::nvtx::pop_range();
 
   // Compute the labelling for the owned part of the graph
@@ -522,15 +522,15 @@ std::size_t run(const raft::handle_t& handle,
 
   Index_* label_bias = labels_temp;
   Multigroups::Labels::label_bias_kernel<Index_, TPB / 2><<<n_groups, TPB / 2, 0, stream>>>(
-    labels, label_bias, mg_metadata.get_dev_pfxsum_rows(), n_groups, MAX_LABEL);
+    labels, label_bias, mgrp_metadata.get_dev_pfxsum_rows(), n_groups, MAX_LABEL);
 
-  std::size_t nblks = raft::ceildiv<std::size_t>(mg_metadata.max_rows, TPB);
+  std::size_t nblks = raft::ceildiv<std::size_t>(mgrp_metadata.max_rows, TPB);
   dim3 grid(nblks, n_groups);
   dim3 blk(TPB, 1);
   Multigroups::Labels::multiGroupRelabelForSklKernel<Index_>
     <<<grid, blk, 0, stream>>>(labels,
-                               mg_metadata.get_dev_pfxsum_rows(),
-                               mg_metadata.get_dev_rows(),
+                               mgrp_metadata.get_dev_pfxsum_rows(),
+                               mgrp_metadata.get_dev_rows(),
                                label_bias,
                                n_groups,
                                N,
@@ -565,7 +565,7 @@ std::size_t run(const raft::handle_t& handle,
 
   adj_ac.destroy();
   corepts_ac.destroy();
-  mg_metadata.destroy();
+  mgrp_metadata.destroy();
 
   CUML_LOG_DEBUG("Done.");
   return (std::size_t)0;

@@ -1,6 +1,22 @@
+/*
+ * Copyright (c) 2018-2022, NVIDIA CORPORATION.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #pragma once
 
-#include "mg_accessor.cuh"
+#include "mgrp_accessor.cuh"
 
 #include <cub/cub.cuh>
 #include <raft/common/nvtx.hpp>
@@ -13,6 +29,10 @@ namespace Multigroups {
 namespace VertexDeg {
 namespace Reduce {
 
+/**
+ * The implementation is based on
+ * https://github.com/rapidsai/raft/blob/branch-23.06/cpp/include/raft/linalg/detail/coalesced_reduction.cuh
+ */
 template <int warpSize, int rpb>
 struct ReductionThinPolicy {
   static constexpr int LogicalWarpSize = warpSize;
@@ -345,8 +365,8 @@ template <typename InType,
           typename MainLambda   = raft::identity_op,
           typename ReduceLambda = raft::add_op,
           typename FinalLambda  = raft::identity_op>
-void MultiGroupCoalescedReduction(OutType* mg_dots,
-                                  const InType* mg_data,
+void MultiGroupCoalescedReduction(OutType* mgrp_dots,
+                                  const InType* mgrp_data,
                                   IdxType n_groups,
                                   IdxType D,
                                   IdxType N,
@@ -367,8 +387,8 @@ void MultiGroupCoalescedReduction(OutType* mg_dots,
    */
   const IdxType numSMs = raft::getMultiProcessorCount();
   if (D <= IdxType(256) || N >= IdxType(4) * numSMs) {
-    coalescedReductionThinDispatcher(mg_dots,
-                                     mg_data,
+    coalescedReductionThinDispatcher(mgrp_dots,
+                                     mgrp_data,
                                      n_groups,
                                      D,
                                      N,
@@ -383,8 +403,8 @@ void MultiGroupCoalescedReduction(OutType* mg_dots,
                                      reduce_op,
                                      final_op);
   } else {
-    coalescedReductionMediumDispatcher(mg_dots,
-                                       mg_data,
+    coalescedReductionMediumDispatcher(mgrp_dots,
+                                       mgrp_data,
                                        n_groups,
                                        D,
                                        N,

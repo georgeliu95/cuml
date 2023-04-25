@@ -1,4 +1,22 @@
-#include "mg_accessor.cuh"
+/*
+ * Copyright (c) 2018-2022, NVIDIA CORPORATION.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#pragma once
+
+#include "mgrp_accessor.cuh"
 
 #include <raft/util/device_atomics.cuh>
 
@@ -11,18 +29,22 @@ namespace Csr {
 // Threads per block in adj_to_csr_kernel.
 static const constexpr int adj_to_csr_tpb = 512;
 
+/**
+ * The implementation is based on
+ * https://github.com/rapidsai/raft/blob/branch-23.06/cpp/include/raft/sparse/convert/detail/adj_to_csr.cuh
+ */
 template <typename index_t>
-__global__ void __launch_bounds__(adj_to_csr_tpb)
-  multi_group_adj_to_csr_kernel(const bool* mg_adj,  // row-major adjacency matrix
-                                const std::size_t* adj_offset,
-                                const index_t* mg_row_ind,   // precomputed row indices
-                                index_t num_groups,          // # groups of adj
-                                const index_t* mg_num_rows,  // # rows of adj
-                                const index_t* row_start_ids,
-                                const index_t* adj_col_stride,  // stride of adj
-                                index_t* mg_row_counters,  // pre-allocated (zeroed) atomic counters
-                                index_t* out_col_ind       // output column indices
-  )
+__global__ void __launch_bounds__(adj_to_csr_tpb) multi_groups_adj_to_csr_kernel(
+  const bool* mgrp_adj,  // row-major adjacency matrix
+  const std::size_t* adj_offset,
+  const index_t* mgrp_row_ind,   // precomputed row indices
+  index_t num_groups,            // # groups of adj
+  const index_t* mgrp_num_rows,  // # rows of adj
+  const index_t* row_start_ids,
+  const index_t* adj_col_stride,  // stride of adj
+  index_t* mgrp_row_counters,     // pre-allocated (zeroed) atomic counters
+  index_t* out_col_ind            // output column indices
+)
 {
   index_t group_id = blockIdx.z * blockDim.z + threadIdx.z;
   if (group_id >= num_groups) return;
@@ -30,12 +52,12 @@ __global__ void __launch_bounds__(adj_to_csr_tpb)
   const int chunk_size = 16;
   typedef raft::TxN_t<bool, chunk_size> chunk_bool;
 
-  index_t num_rows                 = mg_num_rows[group_id];
+  index_t num_rows                 = mgrp_num_rows[group_id];
   index_t num_cols                 = adj_col_stride[group_id];
-  const bool* adj                  = mg_adj + adj_offset[group_id];
+  const bool* adj                  = mgrp_adj + adj_offset[group_id];
   const index_t out_col_ind_offset = row_start_ids[group_id];
-  const index_t* row_ind           = mg_row_ind + out_col_ind_offset;
-  index_t* row_counters            = mg_row_counters + out_col_ind_offset;
+  const index_t* row_ind           = mgrp_row_ind + out_col_ind_offset;
+  index_t* row_counters            = mgrp_row_counters + out_col_ind_offset;
 
   for (index_t i = blockIdx.y; i < num_rows; i += gridDim.y) {
     // Load row information
@@ -76,12 +98,12 @@ __global__ void __launch_bounds__(adj_to_csr_tpb)
 }
 
 template <typename index_t = int>
-void multi_group_adj_to_csr(raft::device_resources const& handle,
-                            Metadata::AdjGraphAccessor<bool, index_t>& adj_ac,
-                            const index_t* row_ind,
-                            index_t* row_counter,
-                            index_t* out_col_ind,
-                            cudaStream_t stream)
+void multi_groups_adj_to_csr(raft::device_resources const& handle,
+                             Metadata::AdjGraphAccessor<bool, index_t>& adj_ac,
+                             const index_t* row_ind,
+                             index_t* row_counter,
+                             index_t* out_col_ind,
+                             cudaStream_t stream)
 {
   index_t n_groups = adj_ac.n_groups;
   index_t num_rows = adj_ac.n_points;
@@ -102,7 +124,7 @@ void multi_group_adj_to_csr(raft::device_resources const& handle,
   cudaGetDevice(&dev_id);
   cudaDeviceGetAttribute(&sm_count, cudaDevAttrMultiProcessorCount, dev_id);
   cudaOccupancyMaxActiveBlocksPerMultiprocessor(
-    &blocks_per_sm, multi_group_adj_to_csr_kernel<index_t>, adj_to_csr_tpb, 0);
+    &blocks_per_sm, multi_groups_adj_to_csr_kernel<index_t>, adj_to_csr_tpb, 0);
 
   index_t max_active_blocks = sm_count * blocks_per_sm;
   index_t blocks_per_row    = raft::ceildiv(max_active_blocks, num_rows);
@@ -117,15 +139,15 @@ void multi_group_adj_to_csr(raft::device_resources const& handle,
   const index_t* dev_row_startids = adj_ac.row_start_ids;
   const index_t* adj_col_stride   = adj_ac.adj_col_stride;
 
-  multi_group_adj_to_csr_kernel<index_t><<<grid, block, 0, stream>>>(adj,
-                                                                     adj_offset,
-                                                                     row_ind,
-                                                                     n_groups,
-                                                                     dev_n_rows,
-                                                                     dev_row_startids,
-                                                                     adj_col_stride,
-                                                                     row_counter,
-                                                                     out_col_ind);
+  multi_groups_adj_to_csr_kernel<index_t><<<grid, block, 0, stream>>>(adj,
+                                                                      adj_offset,
+                                                                      row_ind,
+                                                                      n_groups,
+                                                                      dev_n_rows,
+                                                                      dev_row_startids,
+                                                                      adj_col_stride,
+                                                                      row_counter,
+                                                                      out_col_ind);
   RAFT_CUDA_TRY(cudaPeekAtLastError());
 }
 

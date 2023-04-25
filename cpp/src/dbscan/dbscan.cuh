@@ -212,11 +212,11 @@ void dbscanFitImpl(const raft::handle_t& handle,
 }
 
 template <typename Index_ = int>
-void mg_dbscan_scheduler(size_t max_mbytes_per_dispatch,
-                         Index_ n_groups,
-                         Index_* n_rows_ptr,
-                         Index_* neigh_rows_ptr,
-                         std::vector<std::vector<Index_>>& grouped_row_ids)
+void mgrp_dbscan_scheduler(size_t max_mbytes_per_dispatch,
+                           Index_ n_groups,
+                           Index_* n_rows_ptr,
+                           Index_* neigh_rows_ptr,
+                           std::vector<std::vector<Index_>>& grouped_row_ids)
 {
   std::vector<Index_> group;
   size_t accum_est_mem = 0;
@@ -300,7 +300,7 @@ void dbscanFitImpl(const raft::handle_t& handle,
 
   CUML_LOG_DEBUG("Scheduling input groups");
   std::vector<std::vector<Index_>> grouped_row_ids;
-  mg_dbscan_scheduler<Index_>(
+  mgrp_dbscan_scheduler<Index_>(
     max_mbytes_per_dispatch, n_groups, n_rows_ptr, n_rows_ptr, grouped_row_ids);
   CUML_LOG_DEBUG("Divide input into %lu groups", grouped_row_ids.size());
   if (verbosity >= CUML_LEVEL_DEBUG) {

@@ -1,10 +1,26 @@
+/*
+ * Copyright (c) 2018-2022, NVIDIA CORPORATION.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #pragma once
 
 #include <cuda_runtime.h>
 #include <math.h>
 #include <raft/spatial/knn/epsilon_neighborhood.cuh>
 
-#include "mg_accessor.cuh"
+#include "mgrp_accessor.cuh"
 
 namespace ML {
 namespace Dbscan {
@@ -12,14 +28,15 @@ namespace Multigroups {
 namespace VertexDeg {
 namespace EpsNeighborhood {
 
-/* Overwrite from
+/**
+ * The implementation is based on
  * https://github.com/rapidsai/raft/blob/branch-23.04/cpp/include/raft/spatial/knn/detail/epsilon_neighborhood.cuh
  */
 template <typename DataT,
           typename IdxT,
           typename Policy,
           typename BaseClass = raft::linalg::Contractions_NT<DataT, IdxT, Policy>>
-struct MgEpsUnexpL2SqNeighborhood : public BaseClass {
+struct MgrpEpsUnexpL2SqNeighborhood : public BaseClass {
  private:
   typedef Policy P;
 
@@ -38,19 +55,19 @@ struct MgEpsUnexpL2SqNeighborhood : public BaseClass {
   DataT acc[P::AccRowsPerTh][P::AccColsPerTh];
 
  public:
-  DI MgEpsUnexpL2SqNeighborhood(bool* _adj,
-                                IdxT* _vd,
-                                IdxT* _vd_group,
-                                IdxT* _vd_all,
-                                const DataT* _x,
-                                const DataT* _y,
-                                IdxT _m,
-                                IdxT _n,
-                                IdxT _k,
-                                IdxT _data_start_id,
-                                IdxT _adj_stride,
-                                DataT _eps,
-                                char* _smem)
+  DI MgrpEpsUnexpL2SqNeighborhood(bool* _adj,
+                                  IdxT* _vd,
+                                  IdxT* _vd_group,
+                                  IdxT* _vd_all,
+                                  const DataT* _x,
+                                  const DataT* _y,
+                                  IdxT _m,
+                                  IdxT _n,
+                                  IdxT _k,
+                                  IdxT _data_start_id,
+                                  IdxT _adj_stride,
+                                  DataT _eps,
+                                  char* _smem)
     : BaseClass(_x, _y, _m, _n, _k, _smem),
       adj(_adj),
       eps(_eps),
@@ -228,19 +245,19 @@ __global__ __launch_bounds__(Policy::Nthreads, 2) void MultiGroupEpsUnexpL2SqNei
   const DataT* y = y_ac.pts + group_start_row * k;
   DataT eps_val  = eps[group_id];
 
-  MgEpsUnexpL2SqNeighborhood<DataT, IdxT, Policy> obj(adj,
-                                                      vd,
-                                                      vd_group,
-                                                      vd_all,
-                                                      x,
-                                                      y,
-                                                      m,
-                                                      n,
-                                                      k,
-                                                      group_start_row,
-                                                      adj_ac.adj_col_stride[group_id],
-                                                      eps_val,
-                                                      smem);
+  MgrpEpsUnexpL2SqNeighborhood<DataT, IdxT, Policy> obj(adj,
+                                                        vd,
+                                                        vd_group,
+                                                        vd_all,
+                                                        x,
+                                                        y,
+                                                        m,
+                                                        n,
+                                                        k,
+                                                        group_start_row,
+                                                        adj_ac.adj_col_stride[group_id],
+                                                        eps_val,
+                                                        smem);
   obj.run();
 }
 
